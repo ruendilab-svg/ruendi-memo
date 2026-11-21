@@ -502,6 +502,40 @@ body.locked #app { filter: blur(1px); }
 
 /* 링크 모아보기 */
 .ref-list { display: flex; flex-direction: column; gap: 8px; }
+
+/* 링크 분류 칩 (전체 · 패키지 관련 · 레퍼런스 · 디자인 정보 · 기타 정보 · +) */
+.link-cat-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 10px;
+}
+.chip.add { font-weight: 800; color: #3f5468; padding: 0 9px; }
+
+.ref-item { position: relative; }
+.ref-item .ref-card { padding-right: 118px; }
+.ref-cat {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  max-width: 108px;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(178, 199, 217, .34);
+  color: #2f4b66;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 22px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.ref-cat:hover { background: rgba(178, 199, 217, .6); }
 .ref-card {
   display: flex;
   gap: 10px;
@@ -679,6 +713,17 @@ body.locked #app { filter: blur(1px); }
 .tag-suggest::-webkit-scrollbar { display: none; }
 .ts-label { font-size: 10.5px; font-weight: 700; color: #8b98a3; flex: 0 0 auto; padding-left: 4px; }
 
+/* 입력창 위 링크 분류 선택 바 */
+.link-cat-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 2px 8px;
+  scrollbar-width: none;
+}
+.link-cat-bar::-webkit-scrollbar { display: none; }
+
 /* 드롭존 */
 .drop-zone {
   position: absolute;
@@ -849,6 +894,7 @@ body.locked #app { filter: blur(1px); }
   cursor: pointer;
 }
 .sheet-item:hover { background: #f4f7f9; }
+.sheet-item.active { background: rgba(254, 229, 0, .16); }
 .sheet-item.danger { color: #d1362f; }
 .si-icon { font-size: 16px; width: 22px; text-align: center; }
 .si-label { flex: 1; }

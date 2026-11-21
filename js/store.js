@@ -41,11 +41,53 @@
     return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
   }
 
-  var URL_RE = /https?:\/\/[^\s<>"'`]+/g;
+  /* ---------- 링크 카테고리 ----------
+   *  기본 4종은 항상 보이고, 사용자가 + 로 추가한 분류는 기기에 기억해 둔다.
+   *  분류는 links 배열의 각 항목({ url, category })에 담긴다 → DB(links jsonb) 변경 없이 폰↔PC 동기화.
+   */
+  var LINK_CATEGORIES = ['패키지 관련', '레퍼런스', '디자인 정보', '기타 정보'];
+  var DEFAULT_LINK_CATEGORY = '기타 정보';
+
+  function linkCategoryName(cat) {
+    var c = String(cat == null ? '' : cat).trim();
+    return c || DEFAULT_LINK_CATEGORY;
+  }
+
+  function withCategories(list) {
+    return (list || []).map(function (l) {
+      return Object.assign({}, l, { url: normalizeUrl(l.url), category: linkCategoryName(l.category) });
+    });
+  }
+
+  /* ---------- 링크 인식 ----------
+   *  · https:// · http:// 로 시작하는 표준 주소
+   *  · 프로토콜 없이 쓴 주소도 인식한다
+   *      youtube.com/shorts/wIZIT00Q8Ls?si=…   www.naver.com   instagram.com/p/…   dedcool.com
+   *  · 이메일(user@example.com) · 소수점(1.5, 2.0) · 파일명(logo.png, style.css) 은 링크가 아니다
+   *      - 파일 확장자(png·jpg·css·js …)는 아래 TLD 목록에 없으므로 애초에 걸리지 않는다
+   *      - TLD 목록에 없는 주소는 경로(/…, ?…)가 붙었을 때만 인정한다 → libfoo.so 같은 오인 방지
+   *      - 도메인 바로 앞 글자가 영숫자·@·.·/·_·- 이면 주소가 아니다 → 이메일의 도메인 부분 차단
+   */
+  var HOST_LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
+  var PATH_TAIL = '[\\/?#][^\\s<>"\'`]*';
+  var SAFE_TLDS = 'com|net|org|co\\.kr|kr|io|ai|app|dev|site|shop|store|info|biz|xyz|notion\\.site';
+  var SAFE_DOMAIN = '(?:' + HOST_LABEL + '\\.)+(?:' + SAFE_TLDS + ')';
+  var ANY_DOMAIN = '(?:' + HOST_LABEL + '\\.)+[a-z]{2,24}';
+  var BARE_URL =
+    '(?:(?:' + ANY_DOMAIN + ')(?::[0-9]{2,5})?' + PATH_TAIL +
+    '|(?:' + SAFE_DOMAIN + ')(?::[0-9]{2,5})?(?:' + PATH_TAIL + ')?)';
+  var URL_PREFIX = '[^0-9A-Za-z@\\/._\\-+]';
+  var URL_RE = new RegExp(
+    '(https?:\\/\\/[^\\s<>"\'`]+)' +
+    '|((^|' + URL_PREFIX + ')(' + BARE_URL + '))',
+    'gi'
+  );
   var TAG_RE = /(^|[\s(\[{"'])#([0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ_\-]{1,30})/g;
 
   function stripUrls(text) {
-    return String(text || '').replace(URL_RE, ' ');
+    return String(text || '').replace(URL_RE, function (all, httpUrl, bare, prefix) {
+      return prefix || ' ';
+    });
   }
 
   function parseTags(text) {
@@ -67,21 +109,63 @@
     return s;
   }
 
-  function parseLinks(text) {
+  /* 프로토콜이 없으면 https:// 를 붙여 실제로 열리는 주소로 만든다 */
+  function normalizeUrl(u) {
+    var s = trimUrl(u);
+    if (!s) return '';
+    if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+    return s;
+  }
+
+  /* 본문에서 링크 위치를 모두 찾는다 (본문 클릭 링크 렌더링에도 같은 규칙을 쓴다)
+   *  → [{ start, end, raw, url }]  raw=본문에 쓰인 그대로, url=https:// 가 붙은 실제 주소 */
+  function scanLinks(text) {
     var src = String(text || '');
     var out = [];
-    var seen = {};
     var m;
     URL_RE.lastIndex = 0;
     while ((m = URL_RE.exec(src)) !== null) {
-      var url = trimUrl(m[0]);
-      if (!url) continue;
-      var key = url.toLowerCase();
-      if (seen[key]) continue;
-      seen[key] = 1;
-      out.push({ url: url });
+      var raw = m[1] ? m[1] : m[4];
+      var start = m[1] ? m.index : m.index + (m[3] ? m[3].length : 0);
+      var trimmed = trimUrl(raw);
+      if (!trimmed) { URL_RE.lastIndex = m.index + 1; continue; }
+      out.push({ start: start, end: start + trimmed.length, raw: trimmed, url: normalizeUrl(trimmed) });
+      URL_RE.lastIndex = start + trimmed.length;
     }
     return out;
+  }
+
+  function parseLinks(text) {
+    var out = [];
+    var seen = {};
+    scanLinks(text).forEach(function (hit) {
+      var key = hit.url.toLowerCase();
+      if (seen[key]) return;
+      seen[key] = 1;
+      out.push({ url: hit.url });
+    });
+    return out;
+  }
+
+  /* 저장된 links 가 본문과 어긋나면(프로토콜 없는 주소를 예전 버전으로 저장한 메모 등)
+   * 본문에서 다시 뽑아낸다. 기존 항목의 부가 필드는 url 이 같으면 살려 둔다. */
+  function linksFromContent(content, existing) {
+    var parsed = parseLinks(content);
+    var stored = Array.isArray(existing) ? existing.filter(function (l) { return l && l.url; }) : [];
+    var normalized = stored.map(function (l) { return { url: normalizeUrl(l.url), item: l }; });
+    var same = parsed.length === normalized.length && parsed.every(function (p, i) {
+      return p.url === normalized[i].url;
+    });
+    if (same) {
+      return stored.map(function (l) { return Object.assign({}, l, { url: normalizeUrl(l.url) }); });
+    }
+    var extraByUrl = {};
+    normalized.forEach(function (n) {
+      var extra = {};
+      Object.keys(n.item).forEach(function (k) { if (k !== 'url') extra[k] = n.item[k]; });
+      if (n.url) extraByUrl[n.url] = extra;
+    });
+    return parsed.map(function (p) { return Object.assign({}, extraByUrl[p.url] || {}, p); });
   }
 
   var DAYS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -111,11 +195,16 @@
     uuid: uuid,
     parseTags: parseTags,
     parseLinks: parseLinks,
+    scanLinks: scanLinks,
+    normalizeUrl: normalizeUrl,
     dateKey: dateKey,
     dateLabel: dateLabel,
     timeLabel: timeLabel,
     stripUrls: stripUrls,
-    trimUrl: trimUrl
+    trimUrl: trimUrl,
+    LINK_CATEGORIES: LINK_CATEGORIES,
+    DEFAULT_LINK_CATEGORY: DEFAULT_LINK_CATEGORY,
+    linkCategoryName: linkCategoryName
   };
 
   /* ---------- 상태 알림 ---------- */
@@ -162,8 +251,8 @@
   function normalize(m) {
     m.content = typeof m.content === 'string' ? m.content : '';
     m.tags = Array.isArray(m.tags) && m.tags.length ? m.tags : parseTags(m.content);
-    m.links = Array.isArray(m.links) ? m.links.filter(function (l) { return l && l.url; }) : [];
-    if (!m.links.length) m.links = parseLinks(m.content);
+    m.links = linksFromContent(m.content, m.links);
+    m.links = withCategories(m.links);
     m.images = Array.isArray(m.images) ? m.images.filter(function (i) { return i && i.key; }) : [];
     m.pinned = !!m.pinned;
     m.deleted = !!m.deleted;
@@ -419,11 +508,12 @@
   async function addMemo(input) {
     var now = new Date().toISOString();
     var content = String((input && input.content) || '');
+    var category = linkCategoryName(input && input.linkCategory);
     var memo = normalize({
       id: uuid(),
       content: content,
       tags: parseTags(content),
-      links: parseLinks(content),
+      links: parseLinks(content).map(function (l) { return { url: l.url, category: category }; }),
       images: (input && input.images) || [],
       pinned: false,
       deleted: false,
@@ -446,9 +536,11 @@
     if (typeof patch.content === 'string') {
       m.content = patch.content;
       m.tags = parseTags(m.content);
-      m.links = parseLinks(m.content);
+      // 본문이 바뀌어도 이미 고른 링크 분류는 url 이 같은 한 유지한다
+      m.links = withCategories(linksFromContent(m.content, m.links));
     }
     if (Array.isArray(patch.images)) m.images = patch.images;
+    if (Array.isArray(patch.links)) m.links = withCategories(patch.links);
     if (typeof patch.pinned === 'boolean') m.pinned = patch.pinned;
     m.updated_at = new Date().toISOString();
     m.dirty = true;
@@ -462,6 +554,23 @@
     var m = byId.get(id);
     if (!m) return null;
     return updateMemo(id, { pinned: !m.pinned });
+  }
+
+  /* 링크 한 개(url 지정) 또는 메모의 모든 링크(url=null)의 분류를 바꿔 저장·동기화한다 */
+  async function setLinkCategory(id, url, category) {
+    var m = byId.get(id);
+    if (!m) return null;
+    var target = url ? normalizeUrl(url) : null;
+    var next = linkCategoryName(category);
+    var changed = false;
+    var links = (m.links || []).map(function (l) {
+      if (target && normalizeUrl(l.url) !== target) return l;
+      if (linkCategoryName(l.category) === next) return l;
+      changed = true;
+      return Object.assign({}, l, { category: next });
+    });
+    if (!changed) return m;
+    return updateMemo(id, { links: links });
   }
 
   async function deleteMemo(id) {
@@ -705,6 +814,7 @@
     addMemo: addMemo,
     updateMemo: updateMemo,
     togglePin: togglePin,
+    setLinkCategory: setLinkCategory,
     deleteMemo: deleteMemo,
     clearAll: clearAll,
     subscribe: function (fn) { listeners.add(fn); return function () { listeners.delete(fn); }; },

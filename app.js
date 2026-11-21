@@ -7,10 +7,11 @@
   var Store = window.MemoStore;
   var idb = window.MemoIdb;
   var U = window.MemoUtil;
-  var APP_VERSION = '1.1.0';
+  var APP_VERSION = '1.1.2';
 
   var SET_KEY = 'memo.settings.v1';
   var PIN_KEY = 'memo.pin.v1';
+  var LINK_CAT_KEY = 'memo.linkcats.v1';
 
   var els = {};
   var blobUrls = new Map();
@@ -18,6 +19,9 @@
     memos: [],
     view: 'timeline',
     tag: null,
+    linkCat: null,
+    composerCat: null,
+    customCats: loadCustomCats(),
     query: '',
     searchOpen: true,
     pending: [],
@@ -64,6 +68,109 @@
 
   function saveSettings() {
     try { localStorage.setItem(SET_KEY, JSON.stringify(state.settings)); } catch (e) { /* ignore */ }
+  }
+
+  /* ---------------------------------------------------------- */
+  /* 링크 분류 (패키지 관련 · 레퍼런스 · 디자인 정보 · 기타 정보)   */
+  /* ---------------------------------------------------------- */
+
+  function defaultLinkCategories() {
+    return (U.LINK_CATEGORIES || ['패키지 관련', '레퍼런스', '디자인 정보', '기타 정보']).slice();
+  }
+
+  function defaultLinkCategory() {
+    return U.DEFAULT_LINK_CATEGORY || '기타 정보';
+  }
+
+  function loadCustomCats() {
+    try {
+      var arr = JSON.parse(localStorage.getItem(LINK_CAT_KEY) || '[]');
+      if (!Array.isArray(arr)) return [];
+      return arr.filter(function (x) { return typeof x === 'string' && x.trim(); })
+        .map(function (x) { return x.trim(); });
+    } catch (e) { return []; }
+  }
+
+  function saveCustomCats() {
+    try { localStorage.setItem(LINK_CAT_KEY, JSON.stringify(state.customCats)); } catch (e) { /* ignore */ }
+  }
+
+  /* 기본 4종 → 직접 추가한 분류 → 이미 메모에 저장된 분류 순서로 중복 없이 */
+  function linkCategories() {
+    var out = [];
+    var seen = {};
+    defaultLinkCategories().forEach(function (c) {
+      if (c && !seen[c]) { seen[c] = 1; out.push(c); }
+    });
+    (state.customCats || []).forEach(function (c) {
+      if (c && !seen[c]) { seen[c] = 1; out.push(c); }
+    });
+    state.memos.forEach(function (m) {
+      if (m.deleted) return;
+      (m.links || []).forEach(function (l) {
+        var c = l && l.category;
+        if (c && !seen[c]) { seen[c] = 1; out.push(c); }
+      });
+    });
+    return out;
+  }
+
+  function linkCategoryOf(link) {
+    return (link && link.category) || defaultLinkCategory();
+  }
+
+  function categoryCounts(items) {
+    var map = new Map();
+    items.forEach(function (it) {
+      var c = linkCategoryOf(it.link);
+      map.set(c, (map.get(c) || 0) + 1);
+    });
+    return map;
+  }
+
+  function addLinkCategory() {
+    var name = window.prompt('추가할 링크 분류 이름을 입력하세요');
+    if (name === null) return null;
+    name = name.trim();
+    if (!name) return null;
+    if (linkCategories().indexOf(name) !== -1) { toast('이미 있는 분류예요'); return name; }
+    state.customCats.push(name);
+    saveCustomCats();
+    toast("'" + name + "' 분류를 추가했어요");
+    render();
+    return name;
+  }
+
+  /* 입력창에 주소가 감지되면 위에 분류 선택 바를 띄운다 */
+  function renderLinkCatBar() {
+    if (!els.linkCatBar) return;
+    els.linkCatBar.innerHTML = '';
+    var current = state.composerCat || defaultLinkCategory();
+    els.linkCatBar.appendChild(el('span', 'ts-label', '분류'));
+    linkCategories().forEach(function (cat) {
+      var b = el('button', 'chip small' + (cat === current ? ' active' : ''), cat);
+      b.type = 'button';
+      b.setAttribute('data-cat', cat);
+      b.addEventListener('mousedown', function (e) { e.preventDefault(); });
+      b.addEventListener('click', function () {
+        state.composerCat = cat;
+        renderLinkCatBar();
+      });
+      els.linkCatBar.appendChild(b);
+    });
+  }
+
+  function updateLinkCatBar() {
+    if (!els.linkCatBar) return;
+    var hasLink = !!(els.input && U.parseLinks(els.input.value).length);
+    if (!hasLink) {
+      state.composerCat = null;
+      els.linkCatBar.innerHTML = '';
+      els.linkCatBar.classList.add('hidden');
+      return;
+    }
+    renderLinkCatBar();
+    els.linkCatBar.classList.remove('hidden');
   }
 
   function getPin() {
@@ -351,28 +458,23 @@
     els.tagbarWrap.classList.toggle('hidden', tags.length === 0);
   }
 
+  /* 본문 안의 주소를 클릭 링크로 바꾼다.
+   * store.js 의 scanLinks 를 그대로 쓰므로 링크 카드·🔗 링크 탭과 판정 규칙이 같다
+   * (https:// 없는 youtube.com/shorts/…, www.naver.com, dedcool.com 도 링크가 된다) */
   function appendRichText(container, text) {
     var src = String(text || '');
-    var urlRe = /https?:\/\/[^\s<>"'`]+/g;
+    var hits = U.scanLinks ? U.scanLinks(src) : [];
     var last = 0;
-    var m;
 
-    while ((m = urlRe.exec(src)) !== null) {
-      if (m.index > last) appendTaggedText(container, src.slice(last, m.index));
-      var raw = m[0];
-      var url = U.trimUrl(raw);
-      var a = el('a', 'inline-link', url);
-      a.href = url;
+    hits.forEach(function (hit) {
+      if (hit.start > last) appendTaggedText(container, src.slice(last, hit.start));
+      var a = el('a', 'inline-link', hit.raw);
+      a.href = hit.url;          // 프로토콜이 없던 주소는 https:// 가 붙어 있다
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
       container.appendChild(a);
-      last = m.index + url.length;
-      if (url.length < raw.length) {
-        appendTaggedText(container, raw.slice(url.length));
-        last = m.index + raw.length;
-      }
-      urlRe.lastIndex = last;
-    }
+      last = hit.end;
+    });
     if (last < src.length) appendTaggedText(container, src.slice(last));
   }
 
@@ -477,8 +579,11 @@
     } else {
       if (hasImages) bubble.appendChild(imageGrid(m));
 
+      // 본문이 주소뿐이면 링크 카드만 보여 준다 (프로토콜 유무 차이는 무시하고 비교)
+      var noScheme = function (s) { return String(s || '').replace(/https?:\/\//gi, ''); };
       var onlyUrls = (m.links || []).length > 0 &&
-        m.content.replace(/\s+/g, ' ').trim() === (m.links || []).map(function (l) { return l.url; }).join(' ');
+        noScheme(m.content).replace(/\s+/g, ' ').trim() ===
+        (m.links || []).map(function (l) { return noScheme(l.url); }).join(' ');
 
       if (m.content && !onlyUrls) {
         var text = el('div', 'msg-text');
@@ -652,13 +757,51 @@
     });
     items.sort(function (a, b) { return new Date(b.memo.created_at) - new Date(a.memo.created_at); });
 
-    if (!items.length) {
-      els.altView.appendChild(emptyState('links'));
+    /* 분류 칩 — 검색어·태그로 걸러진 범위 안에서 개수를 센다 */
+    var counts = categoryCounts(items);
+    var row = el('div', 'link-cat-row');
+    var chipFor = function (label, cat, count) {
+      var active = cat === null ? !state.linkCat : state.linkCat === cat;
+      var b = el('button', 'chip' + (active ? ' active' : ''));
+      b.type = 'button';
+      b.setAttribute('data-cat', cat === null ? '' : cat);
+      b.appendChild(document.createTextNode(label));
+      b.appendChild(el('span', 'chip-count', String(count)));
+      b.addEventListener('click', function () {
+        state.linkCat = (cat === null || active) ? null : cat;
+        render();
+      });
+      return b;
+    };
+    row.appendChild(chipFor('전체', null, items.length));
+    linkCategories().forEach(function (cat) {
+      row.appendChild(chipFor(cat, cat, counts.get(cat) || 0));
+    });
+    var addChip = el('button', 'chip add', '+');
+    addChip.type = 'button';
+    addChip.setAttribute('aria-label', '링크 분류 추가');
+    addChip.title = '분류 추가';
+    addChip.addEventListener('click', function () { addLinkCategory(); });
+    row.appendChild(addChip);
+    els.altView.appendChild(row);
+
+    var shown = state.linkCat
+      ? items.filter(function (it) { return linkCategoryOf(it.link) === state.linkCat; })
+      : items;
+
+    if (!shown.length) {
+      var box = el('div', 'empty');
+      box.appendChild(el('div', 'empty-emoji', '🔗'));
+      box.appendChild(el('p', 'empty-title', items.length ? '이 분류에 링크가 없어요' : '아직 링크가 없어요'));
+      box.appendChild(el('p', 'empty-sub', items.length ? '다른 분류를 눌러 보세요.' : '메모에 주소를 붙여넣으면 링크 카드로 정리돼요.'));
+      els.altView.appendChild(box);
       return;
     }
 
     var wrap = el('div', 'ref-list');
-    items.forEach(function (it) {
+    shown.forEach(function (it) {
+      var cell = el('div', 'ref-item');
+
       var a = document.createElement('a');
       a.className = 'ref-card';
       a.href = it.link.url;
@@ -679,7 +822,21 @@
 
       a.appendChild(faviconEl(it.link.url, 'ref-fav'));
       a.appendChild(body);
-      wrap.appendChild(a);
+      cell.appendChild(a);
+
+      var cat = linkCategoryOf(it.link);
+      var badge = el('button', 'ref-cat', '📁 ' + cat);
+      badge.type = 'button';
+      badge.setAttribute('data-cat', cat);
+      badge.setAttribute('aria-label', '링크 분류 바꾸기');
+      badge.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openCategorySheet(it.memo, it.link);
+      });
+      cell.appendChild(badge);
+
+      wrap.appendChild(cell);
     });
     els.altView.appendChild(wrap);
   }
@@ -782,6 +939,14 @@
       { icon: '🗑️', label: '삭제', danger: true, run: function () { removeMemo(m); } }
     ];
 
+    if ((m.links || []).length) {
+      items.splice(items.length - 1, 0, {
+        icon: '📁',
+        label: '링크 분류',
+        run: function () { openMemoLinksSheet(m); }
+      });
+    }
+
     items.forEach(function (it) {
       var b = el('button', 'sheet-item' + (it.danger ? ' danger' : ''));
       b.type = 'button';
@@ -799,11 +964,74 @@
     state.sheetMemo = null;
   }
 
+  /* 링크 한 개 또는 메모의 모든 링크에 분류를 지정한다 */
+  function openCategorySheet(m, link) {
+    state.sheetMemo = m;
+    els.sheetActions.innerHTML = '';
+    els.sheetTitle.textContent = link
+      ? '📁 ' + hostOf(link.url) + ' 분류'
+      : '📁 링크 분류';
+
+    var current = link ? linkCategoryOf(link) : null;
+    linkCategories().forEach(function (cat) {
+      var b = el('button', 'sheet-item' + (cat === current ? ' active' : ''));
+      b.type = 'button';
+      b.setAttribute('data-cat', cat);
+      b.appendChild(el('span', 'si-icon', cat === current ? '✅' : '📁'));
+      b.appendChild(el('span', 'si-label', cat));
+      b.addEventListener('click', function () {
+        Store.setLinkCategory(m.id, link ? link.url : null, cat).then(function () {
+          closeSheet();
+          toast("'" + cat + "'로 분류했어요");
+        });
+      });
+      els.sheetActions.appendChild(b);
+    });
+
+    var add = el('button', 'sheet-item');
+    add.type = 'button';
+    add.appendChild(el('span', 'si-icon', '➕'));
+    add.appendChild(el('span', 'si-label', '새 분류 추가'));
+    add.addEventListener('click', function () {
+      var name = addLinkCategory();
+      if (name) openCategorySheet(m, link);
+    });
+    els.sheetActions.appendChild(add);
+
+    els.sheet.classList.add('open');
+  }
+
+  /* 타임라인 ⋮ → 📁 링크 분류 : 링크가 여러 개면 어느 링크인지 먼저 고른다 */
+  function openMemoLinksSheet(m) {
+    var links = m.links || [];
+    if (!links.length) return;
+    if (links.length === 1) { openCategorySheet(m, links[0]); return; }
+
+    state.sheetMemo = m;
+    els.sheetActions.innerHTML = '';
+    els.sheetTitle.textContent = '📁 링크 분류 — 링크 선택';
+    links.forEach(function (l) {
+      var b = el('button', 'sheet-item');
+      b.type = 'button';
+      b.appendChild(el('span', 'si-icon', '🔗'));
+      b.appendChild(el('span', 'si-label', hostOf(l.url) + ' · ' + linkCategoryOf(l)));
+      b.addEventListener('click', function () { openCategorySheet(m, l); });
+      els.sheetActions.appendChild(b);
+    });
+    els.sheet.classList.add('open');
+  }
+
   function copyMemo(m) {
     var parts = [];
     if (m.content) parts.push(m.content);
+    var contentLc = String(m.content || '').toLowerCase();
     (m.links || []).forEach(function (l) {
-      if (parts.indexOf(l.url) === -1) parts.push(l.url);
+      var url = String(l.url || '');
+      if (!url || parts.indexOf(url) !== -1) return;
+      // 본문에 이미 적힌 주소(프로토콜 없이 적은 경우 포함)는 다시 붙이지 않는다
+      if (contentLc.indexOf(url.toLowerCase()) !== -1) return;
+      if (contentLc.indexOf(url.replace(/^https?:\/\//i, '').toLowerCase()) !== -1) return;
+      parts.push(url);
     });
     var text = parts.join('\n');
     if (!text) text = (m.images || []).length ? '(사진 ' + m.images.length + '장)' : '';
@@ -870,8 +1098,10 @@
       return { key: p.key, w: p.w, h: p.h, type: p.type, size: p.size, name: p.name, url: '' };
     });
 
-    Store.addMemo({ content: text, images: images }).then(function () {
+    Store.addMemo({ content: text, images: images, linkCategory: state.composerCat || undefined }).then(function () {
       els.input.value = '';
+      state.composerCat = null;
+      updateLinkCatBar();
       state.pending.forEach(function (p) { if (p.previewUrl) URL.revokeObjectURL(p.previewUrl); });
       state.pending = [];
       renderPending();
@@ -1299,7 +1529,7 @@
     });
 
     els.btnSend.addEventListener('click', send);
-    els.input.addEventListener('input', function () { autoGrow(); updateTagSuggest(); });
+    els.input.addEventListener('input', function () { autoGrow(); updateTagSuggest(); updateLinkCatBar(); });
     els.input.addEventListener('click', updateTagSuggest);
     els.input.addEventListener('blur', function () { setTimeout(hideTagSuggest, 120); });
 
@@ -1607,6 +1837,7 @@
     els.btnTag = $('#btnTag');
     els.fileInput = $('#fileInput');
     els.pendingTray = $('#pendingTray');
+    els.linkCatBar = $('#linkCatBar');
     els.tagSuggest = $('#tagSuggest');
     els.dropZone = $('#dropZone');
     els.sheet = $('#sheet');
