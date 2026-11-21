@@ -7,7 +7,7 @@
   var Store = window.MemoStore;
   var idb = window.MemoIdb;
   var U = window.MemoUtil;
-  var APP_VERSION = '1.1.3';
+  var APP_VERSION = '1.1.4';
 
   var SET_KEY = 'memo.settings.v1';
   var PIN_KEY = 'memo.pin.v1';
@@ -491,6 +491,7 @@
     if (!state.pending.length) {
       els.pendingTray.classList.add('hidden');
       updatePhotoCatBar();
+      autoGrow();
       return;
     }
     els.pendingTray.classList.remove('hidden');
@@ -511,6 +512,7 @@
       state.pending.length + '장 · ' + (state.settings.imageQuality === 'optimized' ? '웹 최적화' : '원본 유지'));
     els.pendingTray.appendChild(info);
     updatePhotoCatBar();
+    autoGrow();   // 글자 없이 사진만 첨부해도 전송 버튼이 열리도록
   }
 
   /* ---------------------------------------------------------- */
@@ -1592,6 +1594,7 @@
 
   function autoGrow() {
     var t = els.input;
+    if (!t || !els.btnSend) return;
     t.style.height = 'auto';
     t.style.height = Math.min(132, Math.max(24, t.scrollHeight)) + 'px';
     els.btnSend.disabled = state.sending || (!t.value.trim() && !state.pending.length);
