@@ -877,16 +877,21 @@ body.locked #app { filter: blur(1px); }
 .tag-suggest::-webkit-scrollbar { display: none; }
 .ts-label { font-size: 10.5px; font-weight: 700; color: #8b98a3; flex: 0 0 auto; padding-left: 4px; }
 
-/* 입력창 위 링크 분류 선택 바 */
+/* 입력창 위 링크·사진 분류 선택 바 — 여러 줄로 펼치고, 아주 많아지면 세로 스크롤 */
 .link-cat-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  overflow-x: auto;
+  max-height: 112px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 2px 2px 8px;
-  scrollbar-width: none;
+  scrollbar-width: thin;
 }
-.link-cat-bar::-webkit-scrollbar { display: none; }
+.link-cat-bar::-webkit-scrollbar { width: 5px; }
+.link-cat-bar::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, .16); border-radius: 999px; }
+.link-cat-bar::-webkit-scrollbar-track { background: transparent; }
 
 /* 드롭존 */
 .drop-zone {

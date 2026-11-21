@@ -7,7 +7,7 @@
   var Store = window.MemoStore;
   var idb = window.MemoIdb;
   var U = window.MemoUtil;
-  var APP_VERSION = '1.1.4';
+  var APP_VERSION = '1.1.5';
 
   var SET_KEY = 'memo.settings.v1';
   var PIN_KEY = 'memo.pin.v1';
@@ -173,6 +173,17 @@
       });
       els.linkCatBar.appendChild(b);
     });
+    var add = el('button', 'chip small add', '+');
+    add.type = 'button';
+    add.setAttribute('aria-label', '링크 분류 추가');
+    add.title = '분류 추가';
+    add.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    add.addEventListener('click', function () {
+      var name = addLinkCategory();
+      if (name) state.composerCat = name;
+      renderLinkCatBar();
+    });
+    els.linkCatBar.appendChild(add);
   }
 
   function updateLinkCatBar() {
@@ -273,6 +284,17 @@
         renderPhotoCatBar();
       }));
     });
+    var add = el('button', 'chip small add', '+');
+    add.type = 'button';
+    add.setAttribute('aria-label', '사진 분류 추가');
+    add.title = '분류 추가';
+    add.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    add.addEventListener('click', function () {
+      var name = addPhotoCategory();
+      if (name) state.composerPhotoCat = name;
+      renderPhotoCatBar();
+    });
+    els.photoCatBar.appendChild(add);
   }
 
   /* 사진을 첨부한 동안에만 입력창 위에 사진 분류 바를 보여 준다 */
@@ -957,7 +979,7 @@
     box.appendChild(el('div', 'empty-emoji', emoji));
     if (kind === 'photos') {
       box.appendChild(el('p', 'empty-title', '아직 사진이 없어요'));
-      box.appendChild(el('p', 'empty-sub', '아래 ＋ 버튼으로 사진을 첨부해 보세요.'));
+      box.appendChild(el('p', 'empty-sub', '아래 ＋ 버튼으로 사진을 첨부해 보세요. 위 + 로 분류를 먼저 만들 수도 있어요.'));
     } else if (kind === 'links') {
       box.appendChild(el('p', 'empty-title', '아직 링크가 없어요'));
       box.appendChild(el('p', 'empty-sub', '메모에 주소를 붙여넣으면 링크 카드로 정리돼요.'));
@@ -1012,29 +1034,8 @@
     hydrateImages();
   }
 
-  function renderPhotos(list) {
-    els.pinnedSection.innerHTML = '';
-    els.pinnedSection.classList.add('hidden');
-    els.timeline.innerHTML = '';
-    els.timeline.classList.add('hidden');
-    els.altView.classList.remove('hidden');
-    els.altView.innerHTML = '';
-    els.scroller.classList.add('alt-mode');
-
-    var cells = [];
-    list.slice().sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); })
-      .forEach(function (m) {
-        (m.images || []).forEach(function (img, idx) {
-          cells.push({ memo: m, img: img, index: idx });
-        });
-      });
-
-    if (!cells.length) {
-      els.altView.appendChild(emptyState('photos'));
-      return;
-    }
-
-    /* 분류 칩 — 검색어·태그로 걸러진 범위 안에서 개수를 센다 */
+  /* 사진 탭 상단 분류 칩 줄 — 사진이 0장이어도 분류를 확인·추가할 수 있게 항상 그린다 */
+  function photoCatRow(cells) {
     var counts = photoCategoryCounts(cells);
     var row = el('div', 'link-cat-row photo-cat-row');
     var chipFor = function (label, cat, count) {
@@ -1060,7 +1061,33 @@
     addChip.title = '분류 추가';
     addChip.addEventListener('click', function () { addPhotoCategory(); });
     row.appendChild(addChip);
-    els.altView.appendChild(row);
+    return row;
+  }
+
+  function renderPhotos(list) {
+    els.pinnedSection.innerHTML = '';
+    els.pinnedSection.classList.add('hidden');
+    els.timeline.innerHTML = '';
+    els.timeline.classList.add('hidden');
+    els.altView.classList.remove('hidden');
+    els.altView.innerHTML = '';
+    els.scroller.classList.add('alt-mode');
+
+    var cells = [];
+    list.slice().sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); })
+      .forEach(function (m) {
+        (m.images || []).forEach(function (img, idx) {
+          cells.push({ memo: m, img: img, index: idx });
+        });
+      });
+
+    /* 분류 칩 — 사진이 0장이어도 상단에 보여 주고, 아래에 빈 상태 안내 */
+    els.altView.appendChild(photoCatRow(cells));
+
+    if (!cells.length) {
+      els.altView.appendChild(emptyState('photos'));
+      return;
+    }
 
     var shown = state.photoCat
       ? cells.filter(function (c) { return photoCategoryOf(c.img) === state.photoCat; })
@@ -1108,22 +1135,8 @@
     hydrateImages();
   }
 
-  function renderLinks(list) {
-    els.pinnedSection.innerHTML = '';
-    els.pinnedSection.classList.add('hidden');
-    els.timeline.innerHTML = '';
-    els.timeline.classList.add('hidden');
-    els.altView.classList.remove('hidden');
-    els.altView.innerHTML = '';
-    els.scroller.classList.add('alt-mode');
-
-    var items = [];
-    list.forEach(function (m) {
-      (m.links || []).forEach(function (l) { items.push({ memo: m, link: l }); });
-    });
-    items.sort(function (a, b) { return new Date(b.memo.created_at) - new Date(a.memo.created_at); });
-
-    /* 분류 칩 — 검색어·태그로 걸러진 범위 안에서 개수를 센다 */
+  /* 링크 탭 상단 분류 칩 줄 — 링크가 0건이어도 분류를 확인·추가할 수 있게 항상 보여 준다 */
+  function linkCatRow(items) {
     var counts = categoryCounts(items);
     var row = el('div', 'link-cat-row');
     var chipFor = function (label, cat, count) {
@@ -1149,7 +1162,26 @@
     addChip.title = '분류 추가';
     addChip.addEventListener('click', function () { addLinkCategory(); });
     row.appendChild(addChip);
-    els.altView.appendChild(row);
+    return row;
+  }
+
+  function renderLinks(list) {
+    els.pinnedSection.innerHTML = '';
+    els.pinnedSection.classList.add('hidden');
+    els.timeline.innerHTML = '';
+    els.timeline.classList.add('hidden');
+    els.altView.classList.remove('hidden');
+    els.altView.innerHTML = '';
+    els.scroller.classList.add('alt-mode');
+
+    var items = [];
+    list.forEach(function (m) {
+      (m.links || []).forEach(function (l) { items.push({ memo: m, link: l }); });
+    });
+    items.sort(function (a, b) { return new Date(b.memo.created_at) - new Date(a.memo.created_at); });
+
+    /* 분류 칩 — 링크가 0건이어도 상단에 보여 준다 */
+    els.altView.appendChild(linkCatRow(items));
 
     var shown = state.linkCat
       ? items.filter(function (it) { return linkCategoryOf(it.link) === state.linkCat; })
