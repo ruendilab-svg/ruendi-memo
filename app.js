@@ -7,7 +7,7 @@
   var Store = window.MemoStore;
   var idb = window.MemoIdb;
   var U = window.MemoUtil;
-  var APP_VERSION = '1.1.5';
+  var APP_VERSION = '1.1.6';
 
   var SET_KEY = 'memo.settings.v1';
   var PIN_KEY = 'memo.pin.v1';
@@ -574,6 +574,14 @@
   function renderTagbar() {
     if (!els.tagbar) return;
     els.tagbar.innerHTML = '';
+
+    /* 사진·링크 탭은 각 탭의 분류 줄(#photoCatBar / #linkCatBar 의 카테고리 칩)을 이미 갖고 있다.
+     * 상단 태그 필터 바까지 뜨면 두 줄이 겹쳐 보이므로 타임라인에서만 태그 바를 그린다. */
+    if (state.view !== 'timeline') {
+      els.tagbarWrap.classList.add('hidden');
+      return;
+    }
+
     var tags = tagCounts();
 
     var all = el('button', 'chip' + (state.tag === null ? ' active' : ''), '전체');
@@ -2010,6 +2018,12 @@
   }
 
   function setView(view) {
+    /* 사진·링크 탭에는 태그 필터 바가 없으므로, 타임라인에서 걸어 둔 태그 필터를 들고 가지 않는다
+     * (들고 가면 사진·링크 탭이 조건에 걸린 일부만 보여 비어 보일 수 있다) */
+    if (view !== 'timeline' && state.tag !== null) {
+      state.tag = null;
+      if (els.tagbar) els.tagbar.innerHTML = '';
+    }
     state.view = view;
     syncViewTabs();
     const near = isNearBottom();
