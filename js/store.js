@@ -59,6 +59,14 @@
     });
   }
 
+  /* 사진도 같은 4분류를 쓴다 — images 배열의 각 객체({ key, path, w, h, category })에 담깨 DB 스키마 변경 없이 동기화된다 */
+  function withImageCategories(list) {
+    return (list || []).map(function (img) {
+      if (!img || typeof img !== 'object') return img;
+      return Object.assign({}, img, { category: linkCategoryName(img.category) });
+    });
+  }
+
   /* ---------- 링크 인식 ----------
    *  · https:// · http:// 로 시작하는 표준 주소
    *  · 프로토콜 없이 쓴 주소도 인식한다
@@ -135,6 +143,42 @@
     return out;
   }
 
+  /* ---------- 유튜브 링크 ----------
+   *  youtube.com/watch?v=<ID> · youtube.com/shorts/<ID> · youtu.be/<ID>
+   *  youtube.com/live/<ID> · m./music. 서브도메인 · 프로토콜 없이 쓴 주소까지 같은 규칙
+   *  → 11자리 영상 ID 문자열, 유튜브가 아니면 ''
+   */
+  var YT_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+
+  function youtubeId(url) {
+    var s = String(url == null ? '' : url).trim();
+    if (!s) return '';
+    if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+    var u;
+    try { u = new URL(s); } catch (e) { return ''; }
+    var host = String(u.hostname || '').toLowerCase().replace(/^www\./, '');
+
+    if (host === 'youtu.be') {
+      var short = u.pathname.split('/').filter(Boolean)[0] || '';
+      return YT_ID_RE.test(short) ? short : '';
+    }
+    if (host !== 'youtube.com' && host !== 'm.youtube.com' && host !== 'music.youtube.com') return '';
+
+    var m = u.pathname.replace(/\/+$/, '').match(/^\/(?:shorts|live|embed|v)\/([A-Za-z0-9_-]{11})(?:\/|$)/);
+    if (m) return m[1];
+
+    var v = u.searchParams.get('v') || '';
+    return YT_ID_RE.test(v) ? v : '';
+  }
+
+  function youtubeThumb(id) {
+    return id ? 'https://i.ytimg.com/vi/' + encodeURIComponent(id) + '/hqdefault.jpg' : '';
+  }
+
+  function youtubeWatchUrl(id) {
+    return id ? 'https://www.youtube.com/watch?v=' + encodeURIComponent(id) : '';
+  }
+
   function parseLinks(text) {
     var out = [];
     var seen = {};
@@ -202,6 +246,9 @@
     timeLabel: timeLabel,
     stripUrls: stripUrls,
     trimUrl: trimUrl,
+    youtubeId: youtubeId,
+    youtubeThumb: youtubeThumb,
+    youtubeWatchUrl: youtubeWatchUrl,
     LINK_CATEGORIES: LINK_CATEGORIES,
     DEFAULT_LINK_CATEGORY: DEFAULT_LINK_CATEGORY,
     linkCategoryName: linkCategoryName
@@ -253,7 +300,7 @@
     m.tags = Array.isArray(m.tags) && m.tags.length ? m.tags : parseTags(m.content);
     m.links = linksFromContent(m.content, m.links);
     m.links = withCategories(m.links);
-    m.images = Array.isArray(m.images) ? m.images.filter(function (i) { return i && i.key; }) : [];
+    m.images = Array.isArray(m.images) ? withImageCategories(m.images.filter(function (i) { return i && i.key; })) : [];
     m.pinned = !!m.pinned;
     m.deleted = !!m.deleted;
     if (!m.created_at) m.created_at = new Date().toISOString();
@@ -514,7 +561,11 @@
       content: content,
       tags: parseTags(content),
       links: parseLinks(content).map(function (l) { return { url: l.url, category: category }; }),
-      images: (input && input.images) || [],
+      images: ((input && input.images) || []).map(function (img) {
+        return Object.assign({}, img, {
+          category: linkCategoryName(img.category || (input && input.photoCategory))
+        });
+      }),
       pinned: false,
       deleted: false,
       created_at: now,
@@ -571,6 +622,53 @@
     });
     if (!changed) return m;
     return updateMemo(id, { links: links });
+  }
+
+  /* 사진 한 장(key 지정) 또는 메모의 모든 사진(key=null)의 분류를 바꿔 저장·동기화한다 */
+  async function setImageCategory(id, key, category) {
+    var m = byId.get(id);
+    if (!m) return null;
+    var next = linkCategoryName(category);
+    var changed = false;
+    var images = (m.images || []).map(function (img) {
+      if (key && img.key !== key) return img;
+      if (linkCategoryName(img.category) === next) return img;
+      changed = true;
+      return Object.assign({}, img, { category: next });
+    });
+    if (!changed) return m;
+    return updateMemo(id, { images: images });
+  }
+
+  /* 분류 일괄 지정 — links/images 에 URL·key 배열을 주면 그것만, null 이면 그 종류 전체 */
+  async function setCategories(id, opts, category) {
+    var m = byId.get(id);
+    if (!m) return null;
+    var next = linkCategoryName(category);
+    var changed = false;
+    var links = m.links || [];
+    var images = m.images || [];
+    var wantLinks = opts && opts.links;
+    var wantImages = opts && opts.images;
+
+    if (wantLinks) {
+      links = links.map(function (l) {
+        if (Array.isArray(wantLinks) && wantLinks.map(normalizeUrl).indexOf(normalizeUrl(l.url)) === -1) return l;
+        if (linkCategoryName(l.category) === next) return l;
+        changed = true;
+        return Object.assign({}, l, { category: next });
+      });
+    }
+    if (wantImages) {
+      images = images.map(function (img) {
+        if (Array.isArray(wantImages) && wantImages.indexOf(img.key) === -1) return img;
+        if (linkCategoryName(img.category) === next) return img;
+        changed = true;
+        return Object.assign({}, img, { category: next });
+      });
+    }
+    if (!changed) return m;
+    return updateMemo(id, { links: links, images: images });
   }
 
   async function deleteMemo(id) {
@@ -815,6 +913,9 @@
     updateMemo: updateMemo,
     togglePin: togglePin,
     setLinkCategory: setLinkCategory,
+    setImageCategory: setImageCategory,
+    setCategories: setCategories,
+    linkCategoryName: linkCategoryName,
     deleteMemo: deleteMemo,
     clearAll: clearAll,
     subscribe: function (fn) { listeners.add(fn); return function () { listeners.delete(fn); }; },

@@ -399,6 +399,69 @@ body.locked #app { filter: blur(1px); }
   max-width: 220px;
 }
 
+/* 유튜브 링크 카드 — 썸네일 + 영상 제목 */
+.link-card.is-video {
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px 6px 6px;
+}
+.link-card.is-video .link-body { flex: 1 1 auto; }
+.yt-thumb {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: #dfe4ea;
+  border-radius: 7px;
+}
+.yt-thumb-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.link-card .yt-thumb { width: 78px; height: 44px; }
+.yt-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  padding-left: 1px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, .58);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1;
+  pointer-events: none;
+}
+.link-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #25313d;
+  line-height: 1.32;
+  letter-spacing: -0.1px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.link-title:empty { display: none; }
+.link-card.is-video .link-url { max-width: 100%; }
+.link-card.is-video.has-title .link-domain {
+  margin-top: 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #6d7b88;
+}
+.link-card.is-video.has-title .link-url { display: none; }
+
 /* 수정 모드 */
 .edit-area {
   width: 100%;
@@ -499,6 +562,63 @@ body.locked #app { filter: blur(1px); }
   padding: 1px 5px;
   border-radius: 999px;
 }
+.g-cat {
+  position: absolute;
+  right: 4px; bottom: 4px;
+  max-width: calc(100% - 10px);
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #1f2b36;
+  background: rgba(255, 255, 255, .88);
+  padding: 2px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(15, 30, 45, .22);
+}
+.g-cat:hover { background: #fff; }
+
+/* 말풍선 안 분류 배지 */
+.cat-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 5px;
+}
+.bubble.has-img .cat-badges { padding: 3px 6px 0; margin-bottom: 3px; }
+.cat-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, .7);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .72);
+  color: #2f4b66;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cat-badge:hover { background: #fff; }
+
+/* 입력창 위 사진 분류 바 */
+.photo-cat-bar .ts-label { color: #8b98a3; }
+
+/* 라이트박스 분류 버튼 */
+.lb-btn.cat {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* 링크 모아보기 */
 .ref-list { display: flex; flex-direction: column; gap: 8px; }
@@ -547,6 +667,50 @@ body.locked #app { filter: blur(1px); }
   box-shadow: 0 1px 3px rgba(30, 45, 60, .09);
 }
 .ref-card:hover { box-shadow: 0 2px 8px rgba(30, 45, 60, .16); }
+
+/* 유튜브 링크 카드 (🔗 링크 탭) — 썸네일 + 제목 */
+.ref-card.is-video {
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+}
+.ref-item .ref-card.is-video { padding-right: 12px; }
+.ref-card.is-video .yt-thumb {
+  width: 132px;
+  height: 74px;
+  border-radius: 9px;
+}
+.ref-card.is-video .yt-play { width: 30px; height: 30px; font-size: 11px; }
+.ref-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #1f2b36;
+  line-height: 1.35;
+  letter-spacing: -0.1px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.ref-title:empty { display: none; }
+.ref-card.is-video.has-title .ref-domain {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6d7b88;
+}
+.ref-card.is-video.has-title .ref-url { display: none; }
+.ref-foot-right { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.ref-cat.inline {
+  position: static;
+  height: 20px;
+  line-height: 20px;
+  max-width: 104px;
+  padding: 0 8px;
+  font-size: 10px;
+  flex: 0 0 auto;
+}
 .ref-fav {
   width: 24px; height: 24px;
   border-radius: 6px;
@@ -839,7 +1003,7 @@ body.locked #app { filter: blur(1px); }
 .sheet {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 90;   /* 라이트박스(80) 위에서 분류 시트가 열릴 수 있도록 */
   display: none;
 }
 .sheet.open { display: block; }
@@ -1238,6 +1402,13 @@ body.auth-locked #app { display: none; }
   .topbar-title { padding-left: 20px; }
   .search-row, .viewtabs, .tagbar { padding-left: 18px; padding-right: 18px; }
   .msg-more { opacity: .3; }
+
+  /* 🔗 링크 탭: 유튜브 카드 썸네일을 조금 더 크게 */
+  .ref-card.is-video .yt-thumb {
+    width: 212px;
+    height: 119px;
+  }
+  .ref-card.is-video .yt-play { width: 34px; height: 34px; font-size: 13px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

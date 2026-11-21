@@ -7,11 +7,23 @@
   var Store = window.MemoStore;
   var idb = window.MemoIdb;
   var U = window.MemoUtil;
-  var APP_VERSION = '1.1.2';
+  var APP_VERSION = '1.1.3';
 
   var SET_KEY = 'memo.settings.v1';
   var PIN_KEY = 'memo.pin.v1';
   var LINK_CAT_KEY = 'memo.linkcats.v1';
+  var PHOTO_CAT_KEY = 'memo.photocats.v1';
+
+  /* 분류별 아이콘 — 타임라인·사진 탭·링크 탭에서 같은 표기를 쓴다 */
+  var CAT_ICONS = {
+    '패키지 관련': '📦',
+    '레퍼런스': '🎨',
+    '디자인 정보': '💡',
+    '기타 정보': '📌'
+  };
+
+  function catIcon(cat) { return CAT_ICONS[cat] || '📁'; }
+  function catBadgeText(cat) { return catIcon(cat) + ' ' + cat; }
 
   var els = {};
   var blobUrls = new Map();
@@ -20,8 +32,11 @@
     view: 'timeline',
     tag: null,
     linkCat: null,
+    photoCat: null,
     composerCat: null,
+    composerPhotoCat: null,
     customCats: loadCustomCats(),
+    photoCustomCats: loadPhotoCats(),
     query: '',
     searchOpen: true,
     pending: [],
@@ -171,6 +186,107 @@
     }
     renderLinkCatBar();
     els.linkCatBar.classList.remove('hidden');
+  }
+
+  /* ---------------------------------------------------------- */
+  /* 사진 분류 (링크와 같은 4분류, images[].category 에 저장)      */
+  /* ---------------------------------------------------------- */
+
+  function defaultPhotoCategories() { return defaultLinkCategories(); }
+
+  function loadPhotoCats() {
+    try {
+      var arr = JSON.parse(localStorage.getItem(PHOTO_CAT_KEY) || '[]');
+      if (!Array.isArray(arr)) return [];
+      return arr.filter(function (x) { return typeof x === 'string' && x.trim(); })
+        .map(function (x) { return x.trim(); });
+    } catch (e) { return []; }
+  }
+
+  function savePhotoCats() {
+    try { localStorage.setItem(PHOTO_CAT_KEY, JSON.stringify(state.photoCustomCats)); } catch (e) { /* ignore */ }
+  }
+
+  /* 기본 4종 → 사진용으로 추가한 분류 → 이미 저장된 사진에 붙은 분류 순서로 중복 없이 */
+  function photoCategories() {
+    var out = [];
+    var seen = {};
+    defaultPhotoCategories().forEach(function (c) {
+      if (c && !seen[c]) { seen[c] = 1; out.push(c); }
+    });
+    (state.photoCustomCats || []).forEach(function (c) {
+      if (c && !seen[c]) { seen[c] = 1; out.push(c); }
+    });
+    state.memos.forEach(function (m) {
+      if (m.deleted) return;
+      (m.images || []).forEach(function (img) {
+        var c = photoCategoryOf(img);
+        if (c && !seen[c]) { seen[c] = 1; out.push(c); }
+      });
+    });
+    return out;
+  }
+
+  function photoCategoryOf(img) {
+    return (img && img.category) || defaultLinkCategory();
+  }
+
+  function photoCategoryCounts(items) {
+    var map = new Map();
+    items.forEach(function (it) {
+      var c = photoCategoryOf(it.img);
+      map.set(c, (map.get(c) || 0) + 1);
+    });
+    return map;
+  }
+
+  function addPhotoCategory() {
+    var name = window.prompt('추가할 사진 분류 이름을 입력하세요');
+    if (name === null) return null;
+    name = name.trim();
+    if (!name) return null;
+    if (photoCategories().indexOf(name) !== -1) { toast('이미 있는 분류예요'); return name; }
+    state.photoCustomCats.push(name);
+    savePhotoCats();
+    toast("'" + name + "' 분류를 추가했어요");
+    render();
+    return name;
+  }
+
+  function catChipBtn(cat, current, onPick) {
+    var b = el('button', 'chip small' + (cat === current ? ' active' : ''), cat);
+    b.type = 'button';
+    b.setAttribute('data-cat', cat);
+    b.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    b.addEventListener('click', function () { onPick(cat); });
+    return b;
+  }
+
+  function renderPhotoCatBar() {
+    if (!els.photoCatBar) return;
+    els.photoCatBar.innerHTML = '';
+    var current = state.composerPhotoCat || defaultLinkCategory();
+    els.photoCatBar.appendChild(el('span', 'ts-label', '🖼️ 사진'));
+    photoCategories().forEach(function (cat) {
+      els.photoCatBar.appendChild(catChipBtn(cat, current, function (picked) {
+        state.composerPhotoCat = picked;
+        renderPhotoCatBar();
+      }));
+    });
+  }
+
+  /* 사진을 첨부한 동안에만 입력창 위에 사진 분류 바를 보여 준다 */
+  function updatePhotoCatBar() {
+    if (!els.photoCatBar) return;
+    if (!state.pending.length) {
+      state.composerPhotoCat = null;
+      els.photoCatBar.innerHTML = '';
+      els.photoCatBar.classList.add('hidden');
+      return;
+    }
+    if (!state.composerPhotoCat) state.composerPhotoCat = defaultLinkCategory();
+    renderPhotoCatBar();
+    els.photoCatBar.classList.remove('hidden');
   }
 
   function getPin() {
@@ -374,6 +490,7 @@
     els.pendingTray.innerHTML = '';
     if (!state.pending.length) {
       els.pendingTray.classList.add('hidden');
+      updatePhotoCatBar();
       return;
     }
     els.pendingTray.classList.remove('hidden');
@@ -393,6 +510,7 @@
     var info = el('div', 'pending-info',
       state.pending.length + '장 · ' + (state.settings.imageQuality === 'optimized' ? '웹 최적화' : '원본 유지'));
     els.pendingTray.appendChild(info);
+    updatePhotoCatBar();
   }
 
   /* ---------------------------------------------------------- */
@@ -526,7 +644,160 @@
     return span;
   }
 
+  /* ---------------------------------------------------------- */
+  /* 유튜브 카드: 썸네일 + 영상 제목                              */
+  /*  · 썸네일은 i.ytimg.com 에서 바로 (실패하면 파비콘 카드로)     */
+  /*  · 제목은 oEmbed 를 비동기로 받아 메모리·localStorage 에 캐시  */
+  /* ---------------------------------------------------------- */
+
+  var YT_META_KEY = 'memo.ytmeta.v1';
+  var YT_META_TTL = 1000 * 60 * 60 * 24 * 30;  // 30일 지나면 제목을 조용히 새로 받아 온다
+  var YT_META_MAX = 400;
+  var ytMeta = null;
+  var ytPending = {};
+  var ytFailed = {};
+
+  function loadYtMeta() {
+    if (ytMeta) return ytMeta;
+    ytMeta = {};
+    try {
+      var raw = JSON.parse(localStorage.getItem(YT_META_KEY) || '{}');
+      if (raw && typeof raw === 'object') {
+        Object.keys(raw).forEach(function (id) {
+          var it = raw[id];
+          if (it && typeof it.title === 'string' && it.title) ytMeta[id] = it;
+        });
+      }
+    } catch (e) { ytMeta = {}; }
+    return ytMeta;
+  }
+
+  function saveYtMeta() {
+    try {
+      var keys = Object.keys(ytMeta);
+      if (keys.length > YT_META_MAX) {
+        keys.sort(function (a, b) { return (ytMeta[a].at || 0) - (ytMeta[b].at || 0); });
+        keys.slice(0, keys.length - YT_META_MAX).forEach(function (k) { delete ytMeta[k]; });
+      }
+      localStorage.setItem(YT_META_KEY, JSON.stringify(ytMeta));
+    } catch (e) { /* 저장 공간이 없으면 캐시 없이 동작 */ }
+  }
+
+  function youtubeMetaOf(id) {
+    var m = loadYtMeta()[id];
+    return m && m.title ? m : null;
+  }
+
+  function applyYouTubeTitle(id, title) {
+    if (!title) return;
+    var cards = document.querySelectorAll('[data-yt-id="' + id + '"]');
+    Array.prototype.forEach.call(cards, function (card) {
+      var node = card.querySelector('.yt-title');
+      if (node) node.textContent = title;
+      card.classList.add('has-title');
+    });
+  }
+
+  /* 영상 제목을 받아 온다. 실패(오프라인·차단·삭제 영상)하면 조용히 포기한다. */
+  function requestYouTubeTitle(id) {
+    if (!id) return null;
+    if (ytPending[id]) return ytPending[id];
+
+    var cached = youtubeMetaOf(id);
+    if (cached && !(cached.at && Date.now() - cached.at > YT_META_TTL)) return null;
+    if (!cached && ytFailed[id]) return null;
+
+    var endpoint = 'https://www.youtube.com/oembed?url=' +
+      encodeURIComponent(U.youtubeWatchUrl(id)) + '&format=json';
+    var p = fetch(endpoint, { mode: 'cors', credentials: 'omit', cache: 'force-cache' })
+      .then(function (res) {
+        if (!res || !res.ok) throw new Error('oembed ' + (res && res.status));
+        return res.json();
+      })
+      .then(function (data) {
+        var title = String((data && data.title) || '').replace(/\s+/g, ' ').trim();
+        if (!title) throw new Error('no title');
+        ytMeta[id] = {
+          title: title.slice(0, 200),
+          author: String((data && data.author_name) || '').slice(0, 80),
+          at: Date.now()
+        };
+        saveYtMeta();
+        applyYouTubeTitle(id, ytMeta[id].title);
+        return ytMeta[id];
+      })
+      .catch(function () {
+        ytFailed[id] = 1;
+        return null;
+      });
+    ytPending[id] = p;
+    p.then(function () { delete ytPending[id]; });
+    return p;
+  }
+
+  function youtubeThumbEl(id) {
+    var wrap = el('span', 'yt-thumb');
+    var img = document.createElement('img');
+    img.className = 'yt-thumb-img';
+    img.alt = '';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.referrerPolicy = 'no-referrer';
+    img.src = U.youtubeThumb(id);
+    wrap.appendChild(img);
+    wrap.appendChild(el('span', 'yt-play', '▶'));
+    return wrap;
+  }
+
+  /* 썸네일이 안 뜨면 썸네일을 걷어내고 원래의 파비콘 카드 모양으로 되돌린다 */
+  function fallbackToFavicon(a, thumb, url, kind) {
+    var done = false;
+    var img = thumb.querySelector('img');
+    if (!img) return;
+    img.addEventListener('error', function () {
+      if (done) return;
+      done = true;
+      if (thumb.parentNode) thumb.parentNode.removeChild(thumb);
+      a.classList.remove('is-video', 'no-thumb');
+      a.classList.add('no-thumb');
+      if (!a.querySelector('.link-fav') && !a.querySelector('.ref-fav')) {
+        a.insertBefore(faviconEl(url, kind === 'ref' ? 'ref-fav' : 'link-fav'), a.firstChild);
+      }
+    });
+  }
+
+  function youtubeLinkCard(link, id) {
+    var a = document.createElement('a');
+    a.className = 'link-card is-video';
+    a.href = link.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.setAttribute('data-yt-id', id);
+
+    var thumb = youtubeThumbEl(id);
+    a.appendChild(thumb);
+
+    var body = el('div', 'link-body');
+    var title = el('div', 'link-title yt-title');
+    body.appendChild(title);
+    body.appendChild(el('div', 'link-domain', 'youtube.com'));
+    body.appendChild(el('div', 'link-url', link.url));
+    a.appendChild(body);
+
+    var meta = youtubeMetaOf(id);
+    if (meta) {
+      title.textContent = meta.title;
+      a.classList.add('has-title');
+    }
+    requestYouTubeTitle(id);
+    fallbackToFavicon(a, thumb, link.url, 'link');
+    return a;
+  }
+
   function linkCard(link) {
+    var ytId = U.youtubeId ? U.youtubeId(link.url) : '';
+    if (ytId) return youtubeLinkCard(link, ytId);
+
     var a = document.createElement('a');
     a.className = 'link-card';
     a.href = link.url;
@@ -540,6 +811,45 @@
     a.appendChild(faviconEl(link.url, 'link-fav'));
     a.appendChild(body);
     return a;
+  }
+
+  /* ---------------------------------------------------------- */
+  /* 말풍선 분류 배지 (사진·링크 카테고리를 한눈에)                 */
+  /* ---------------------------------------------------------- */
+
+  function memoCategories(m) {
+    var out = [];
+    var seen = {};
+    var add = function (cat, kind) {
+      if (!cat) return;
+      if (seen[cat]) { seen[cat].kinds[kind] = 1; return; }
+      var item = { cat: cat, kinds: {} };
+      item.kinds[kind] = 1;
+      seen[cat] = item;
+      out.push(item);
+    };
+    (m.images || []).forEach(function (img) { add(photoCategoryOf(img), 'img'); });
+    (m.links || []).forEach(function (l) { add(linkCategoryOf(l), 'link'); });
+    return out;
+  }
+
+  function catBadgeRow(m) {
+    var cats = memoCategories(m);
+    if (!cats.length) return null;
+    var row = el('div', 'cat-badges');
+    cats.forEach(function (item) {
+      var b = el('button', 'cat-badge', catBadgeText(item.cat));
+      b.type = 'button';
+      b.setAttribute('data-cat', item.cat);
+      b.title = '분류 바꾸기';
+      b.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openMemoCategorySheet(m, item.kinds, item.cat);
+      });
+      row.appendChild(b);
+    });
+    return row;
   }
 
   function messageEl(m) {
@@ -577,6 +887,8 @@
       bubble.appendChild(bar);
       setTimeout(function () { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 30);
     } else {
+      var catRow = catBadgeRow(m);
+      if (catRow) bubble.appendChild(catRow);
       if (hasImages) bubble.appendChild(imageGrid(m));
 
       // 본문이 주소뿐이면 링크 카드만 보여 준다 (프로토콜 유무 차이는 무시하고 비교)
@@ -720,8 +1032,49 @@
       return;
     }
 
+    /* 분류 칩 — 검색어·태그로 걸러진 범위 안에서 개수를 센다 */
+    var counts = photoCategoryCounts(cells);
+    var row = el('div', 'link-cat-row photo-cat-row');
+    var chipFor = function (label, cat, count) {
+      var active = cat === null ? !state.photoCat : state.photoCat === cat;
+      var b = el('button', 'chip' + (active ? ' active' : ''));
+      b.type = 'button';
+      b.setAttribute('data-cat', cat === null ? '' : cat);
+      b.appendChild(document.createTextNode(label));
+      b.appendChild(el('span', 'chip-count', String(count)));
+      b.addEventListener('click', function () {
+        state.photoCat = (cat === null || active) ? null : cat;
+        render();
+      });
+      return b;
+    };
+    row.appendChild(chipFor('전체', null, cells.length));
+    photoCategories().forEach(function (cat) {
+      row.appendChild(chipFor(cat, cat, counts.get(cat) || 0));
+    });
+    var addChip = el('button', 'chip add', '+');
+    addChip.type = 'button';
+    addChip.setAttribute('aria-label', '사진 분류 추가');
+    addChip.title = '분류 추가';
+    addChip.addEventListener('click', function () { addPhotoCategory(); });
+    row.appendChild(addChip);
+    els.altView.appendChild(row);
+
+    var shown = state.photoCat
+      ? cells.filter(function (c) { return photoCategoryOf(c.img) === state.photoCat; })
+      : cells;
+
+    if (!shown.length) {
+      var box = el('div', 'empty');
+      box.appendChild(el('div', 'empty-emoji', '🖼️'));
+      box.appendChild(el('p', 'empty-title', '이 분류에 사진이 없어요'));
+      box.appendChild(el('p', 'empty-sub', '다른 분류를 눌러 보세요.'));
+      els.altView.appendChild(box);
+      return;
+    }
+
     var grid = el('div', 'gallery');
-    cells.forEach(function (c) {
+    shown.forEach(function (c) {
       var btn = el('button', 'g-cell');
       btn.type = 'button';
       var image = document.createElement('img');
@@ -735,6 +1088,17 @@
       if (state.query || state.tag) {
         btn.appendChild(el('span', 'g-meta', shortDate(c.memo.created_at)));
       }
+      var catBtn = el('span', 'g-cat', catBadgeText(photoCategoryOf(c.img)));
+      catBtn.setAttribute('role', 'button');
+      catBtn.setAttribute('tabindex', '0');
+      catBtn.setAttribute('data-cat', photoCategoryOf(c.img));
+      catBtn.setAttribute('aria-label', '사진 분류 바꾸기');
+      catBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openPhotoCategorySheet(c.memo, c.img.key);
+      });
+      btn.appendChild(catBtn);
       btn.addEventListener('click', function () { openLightbox(c.memo, c.index); });
       grid.appendChild(btn);
     });
@@ -801,31 +1165,40 @@
     var wrap = el('div', 'ref-list');
     shown.forEach(function (it) {
       var cell = el('div', 'ref-item');
+      var ytId = U.youtubeId ? U.youtubeId(it.link.url) : '';
 
       var a = document.createElement('a');
-      a.className = 'ref-card';
+      a.className = 'ref-card' + (ytId ? ' is-video' : '');
       a.href = it.link.url;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
 
+      var thumb = null;
+      if (ytId) {
+        cell.classList.add('is-video');
+        a.setAttribute('data-yt-id', ytId);
+        thumb = youtubeThumbEl(ytId);
+        a.appendChild(thumb);
+      }
+
       var body = el('div', 'ref-body');
-      body.appendChild(el('div', 'ref-domain', hostOf(it.link.url)));
+      var title = null;
+      if (ytId) {
+        title = el('div', 'ref-title yt-title');
+        body.appendChild(title);
+        var ytMetaCached = youtubeMetaOf(ytId);
+        if (ytMetaCached) {
+          title.textContent = ytMetaCached.title;
+          a.classList.add('has-title');
+        }
+      }
+      body.appendChild(el('div', 'ref-domain', ytId ? 'youtube.com' : hostOf(it.link.url)));
       body.appendChild(el('div', 'ref-url', it.link.url));
       var note = U.stripUrls(it.memo.content).replace(/\s+/g, ' ').trim();
       if (note) body.appendChild(el('div', 'ref-note', note));
-      var foot = el('div', 'ref-foot');
-      foot.appendChild(el('span', '', shortDate(it.memo.created_at) + ' ' + U.timeLabel(it.memo.created_at)));
-      if ((it.memo.tags || []).length) {
-        foot.appendChild(el('span', 'ref-tags', (it.memo.tags || []).map(function (t) { return '#' + t; }).join(' ')));
-      }
-      body.appendChild(foot);
-
-      a.appendChild(faviconEl(it.link.url, 'ref-fav'));
-      a.appendChild(body);
-      cell.appendChild(a);
 
       var cat = linkCategoryOf(it.link);
-      var badge = el('button', 'ref-cat', '📁 ' + cat);
+      var badge = el('button', 'ref-cat', catBadgeText(cat));
       badge.type = 'button';
       badge.setAttribute('data-cat', cat);
       badge.setAttribute('aria-label', '링크 분류 바꾸기');
@@ -834,7 +1207,31 @@
         e.stopPropagation();
         openCategorySheet(it.memo, it.link);
       });
-      cell.appendChild(badge);
+
+      var foot = el('div', 'ref-foot');
+      foot.appendChild(el('span', '', shortDate(it.memo.created_at) + ' ' + U.timeLabel(it.memo.created_at)));
+      var right = el('span', 'ref-foot-right');
+      if ((it.memo.tags || []).length) {
+        right.appendChild(el('span', 'ref-tags', (it.memo.tags || []).map(function (t) { return '#' + t; }).join(' ')));
+      }
+      if (ytId) {
+        // 유튜브 카드는 썸네일 폭을 비우지 않도록 분류 배지를 카드 아래 줄에 둔다
+        badge.classList.add('inline');
+        right.appendChild(badge);
+      }
+      if (right.childNodes.length) foot.appendChild(right);
+      body.appendChild(foot);
+
+      if (ytId) {
+        requestYouTubeTitle(ytId);
+        if (thumb) fallbackToFavicon(a, thumb, it.link.url, 'ref');
+      } else {
+        a.appendChild(faviconEl(it.link.url, 'ref-fav'));
+      }
+      a.appendChild(body);
+      cell.appendChild(a);
+
+      if (!ytId) cell.appendChild(badge);
 
       wrap.appendChild(cell);
     });
@@ -884,11 +1281,21 @@
     showLbImage();
   }
 
+  function updateLbCat() {
+    if (!els.lbCat) return;
+    var lb = state.lightbox;
+    if (!lb) return;
+    var img = (lb.memo.images || [])[lb.i];
+    els.lbCat.textContent = img ? catBadgeText(photoCategoryOf(img)) : '📌 기타 정보';
+    els.lbCat.setAttribute('data-cat', img ? photoCategoryOf(img) : '');
+  }
+
   function showLbImage() {
     var lb = state.lightbox;
     if (!lb) return;
     var images = lb.memo.images || [];
     var img = images[lb.i];
+    updateLbCat();
     els.lbCounter.textContent = (lb.i + 1) + ' / ' + images.length;
     els.lbPrev.disabled = lb.i <= 0;
     els.lbNext.disabled = lb.i >= images.length - 1;
@@ -939,6 +1346,14 @@
       { icon: '🗑️', label: '삭제', danger: true, run: function () { removeMemo(m); } }
     ];
 
+    if ((m.images || []).length) {
+      items.splice(items.length - 1, 0, {
+        icon: '🖼️',
+        label: '사진 분류',
+        run: function () { openMemoPhotosSheet(m); }
+      });
+    }
+
     if ((m.links || []).length) {
       items.splice(items.length - 1, 0, {
         icon: '📁',
@@ -964,24 +1379,24 @@
     state.sheetMemo = null;
   }
 
-  /* 링크 한 개 또는 메모의 모든 링크에 분류를 지정한다 */
-  function openCategorySheet(m, link) {
+  /* 분류 선택 시트 — 링크·사진·둘 다에 공통으로 쓴다 */
+  function catSheet(opts) {
+    var m = opts.memo;
     state.sheetMemo = m;
     els.sheetActions.innerHTML = '';
-    els.sheetTitle.textContent = link
-      ? '📁 ' + hostOf(link.url) + ' 분류'
-      : '📁 링크 분류';
+    els.sheetTitle.textContent = opts.title;
 
-    var current = link ? linkCategoryOf(link) : null;
-    linkCategories().forEach(function (cat) {
-      var b = el('button', 'sheet-item' + (cat === current ? ' active' : ''));
+    (opts.categories() || []).forEach(function (cat) {
+      var current = cat === opts.current;
+      var b = el('button', 'sheet-item' + (current ? ' active' : ''));
       b.type = 'button';
       b.setAttribute('data-cat', cat);
-      b.appendChild(el('span', 'si-icon', cat === current ? '✅' : '📁'));
+      b.appendChild(el('span', 'si-icon', current ? '✅' : catIcon(cat)));
       b.appendChild(el('span', 'si-label', cat));
       b.addEventListener('click', function () {
-        Store.setLinkCategory(m.id, link ? link.url : null, cat).then(function () {
+        Promise.resolve(opts.apply(cat)).then(function () {
           closeSheet();
+          updateLbCat();
           toast("'" + cat + "'로 분류했어요");
         });
       });
@@ -993,12 +1408,109 @@
     add.appendChild(el('span', 'si-icon', '➕'));
     add.appendChild(el('span', 'si-label', '새 분류 추가'));
     add.addEventListener('click', function () {
-      var name = addLinkCategory();
-      if (name) openCategorySheet(m, link);
+      var name = opts.addCategory();
+      if (name) catSheet(opts);
     });
     els.sheetActions.appendChild(add);
 
     els.sheet.classList.add('open');
+  }
+
+  /* 링크 한 개 또는 메모의 모든 링크에 분류를 지정한다 */
+  function openCategorySheet(m, link) {
+    catSheet({
+      memo: m,
+      title: link ? '🔗 ' + hostOf(link.url) + ' 분류' : '🔗 링크 분류',
+      categories: linkCategories,
+      current: link ? linkCategoryOf(link) : null,
+      addCategory: addLinkCategory,
+      apply: function (cat) {
+        return Store.setLinkCategory(m.id, link ? link.url : null, cat);
+      }
+    });
+  }
+
+  /* 사진 한 장(key) 또는 메모의 모든 사진(key=null)에 분류를 지정한다 */
+  function openPhotoCategorySheet(m, key) {
+    var images = m.images || [];
+    var idx = -1;
+    images.forEach(function (img, i) { if (key && img.key === key) idx = i; });
+    var label = idx >= 0
+      ? '사진 ' + (idx + 1) + ' 분류'
+      : '사진 전체 ' + images.length + '장 분류';
+    catSheet({
+      memo: m,
+      title: '🖼️ ' + label,
+      categories: photoCategories,
+      current: idx >= 0 ? photoCategoryOf(images[idx]) : null,
+      addCategory: addPhotoCategory,
+      apply: function (cat) {
+        return Store.setImageCategory(m.id, idx >= 0 ? key : null, cat);
+      }
+    });
+  }
+
+  /* 타임라인 ⋮ → 🖼️ 사진 분류 : 사진이 여러 장이면 어느 사진인지 먼저 고른다 */
+  function openMemoPhotosSheet(m) {
+    var images = m.images || [];
+    if (!images.length) return;
+    if (images.length === 1) { openPhotoCategorySheet(m, images[0].key); return; }
+
+    state.sheetMemo = m;
+    els.sheetActions.innerHTML = '';
+    els.sheetTitle.textContent = '🖼️ 사진 분류 — 사진 선택';
+
+    var all = el('button', 'sheet-item');
+    all.type = 'button';
+    all.appendChild(el('span', 'si-icon', '🗂️'));
+    all.appendChild(el('span', 'si-label', '모든 사진 (' + images.length + '장)'));
+    all.addEventListener('click', function () { openPhotoCategorySheet(m, null); });
+    els.sheetActions.appendChild(all);
+
+    images.forEach(function (img, i) {
+      var b = el('button', 'sheet-item');
+      b.type = 'button';
+      b.appendChild(el('span', 'si-icon', '🖼️'));
+      b.appendChild(el('span', 'si-label', '사진 ' + (i + 1) + ' · ' + catBadgeText(photoCategoryOf(img))));
+      b.addEventListener('click', function () { openPhotoCategorySheet(m, img.key); });
+      els.sheetActions.appendChild(b);
+    });
+    els.sheet.classList.add('open');
+  }
+
+  /* 말풍선 배지 → 그 배지의 분류를 가진 링크·사진만 바꿈 */
+  function openMemoCategorySheet(m, kinds, cat) {
+    var imgs = (m.images || []).filter(function (img) { return photoCategoryOf(img) === cat; });
+    var links = (m.links || []).filter(function (l) { return linkCategoryOf(l) === cat; });
+    var targets = imgs.length + links.length;
+    if (!targets) return;
+
+    if (targets === 1) {
+      if (imgs.length) openPhotoCategorySheet(m, imgs[0].key);
+      else openCategorySheet(m, links[0]);
+      return;
+    }
+
+    var keys = imgs.map(function (img) { return img.key; });
+    var urls = links.map(function (l) { return l.url; });
+    var parts = [];
+    if (imgs.length) parts.push('사진 ' + imgs.length + '장');
+    if (links.length) parts.push('링크 ' + links.length + '개');
+    var photoOnly = imgs.length && !links.length;
+
+    catSheet({
+      memo: m,
+      title: (catBadgeText(cat) + ' · ' + parts.join(' · ')).slice(0, 40),
+      categories: photoOnly ? photoCategories : linkCategories,
+      current: cat,
+      addCategory: photoOnly ? addPhotoCategory : addLinkCategory,
+      apply: function (next) {
+        return Store.setCategories(m.id, {
+          links: links.length ? urls : null,
+          images: imgs.length ? keys : null
+        }, next);
+      }
+    });
   }
 
   /* 타임라인 ⋮ → 📁 링크 분류 : 링크가 여러 개면 어느 링크인지 먼저 고른다 */
@@ -1098,10 +1610,17 @@
       return { key: p.key, w: p.w, h: p.h, type: p.type, size: p.size, name: p.name, url: '' };
     });
 
-    Store.addMemo({ content: text, images: images, linkCategory: state.composerCat || undefined }).then(function () {
+    Store.addMemo({
+      content: text,
+      images: images,
+      linkCategory: state.composerCat || undefined,
+      photoCategory: state.composerPhotoCat || undefined
+    }).then(function () {
       els.input.value = '';
       state.composerCat = null;
+      state.composerPhotoCat = null;
       updateLinkCatBar();
+      updatePhotoCatBar();
       state.pending.forEach(function (p) { if (p.previewUrl) URL.revokeObjectURL(p.previewUrl); });
       state.pending = [];
       renderPending();
@@ -1602,6 +2121,13 @@
 
     // 라이트박스
     els.lbClose.addEventListener('click', closeLightbox);
+    if (els.lbCat) els.lbCat.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var lb = state.lightbox;
+      if (!lb) return;
+      var img = (lb.memo.images || [])[lb.i];
+      openPhotoCategorySheet(lb.memo, img ? img.key : null);
+    });
     els.lbPrev.addEventListener('click', function (e) { e.stopPropagation(); lbStep(-1); });
     els.lbNext.addEventListener('click', function (e) { e.stopPropagation(); lbStep(1); });
     els.lbImg.addEventListener('click', function (e) {
@@ -1838,6 +2364,7 @@
     els.fileInput = $('#fileInput');
     els.pendingTray = $('#pendingTray');
     els.linkCatBar = $('#linkCatBar');
+    els.photoCatBar = $('#photoCatBar');
     els.tagSuggest = $('#tagSuggest');
     els.dropZone = $('#dropZone');
     els.sheet = $('#sheet');
@@ -1863,6 +2390,7 @@
     els.lbClose = $('#lbClose');
     els.lbPrev = $('#lbPrev');
     els.lbNext = $('#lbNext');
+    els.lbCat = $('#lbCat');
     els.lbStage = $('#lbStage');
     els.toast = $('#toast');
     els.lock = $('#lock');
