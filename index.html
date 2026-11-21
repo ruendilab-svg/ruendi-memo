@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#b2c7d9">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="레퍼런스 메모">
+<meta name="description" content="카카오톡 '나와의 채팅'처럼 쓰는 사진·레퍼런스 수집 메모장">
+<title>레퍼런스 메모 · 나와의 채팅</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png" sizes="192x192">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+<script>
+  /* 진단용: 콘솔 에러를 window.__errors 에 모아 둔다 (검증/디버깅에 사용) */
+  window.__errors = [];
+  window.addEventListener('error', function (e) {
+    window.__errors.push('error: ' + (e && e.message ? e.message : String(e)));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    window.__errors.push('rejection: ' + String(e && e.reason && e.reason.message ? e.reason.message : (e && e.reason)));
+  });
+</script>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- 상단바 -->
+  <header class="topbar">
+    <div class="topbar-title">
+      <div class="tt-left">
+        <span class="tt-name">나와의 채팅</span>
+        <span id="syncBadge" class="sync-badge local" title="동기화 상태">
+          <i class="dot"></i><b id="syncText">로컬</b>
+        </span>
+        <span id="countBadge" class="count-badge"></span>
+      </div>
+      <div class="tt-right">
+        <button id="btnSearch" class="icon-btn" type="button" aria-label="검색">
+          <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M15.5 15.5 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+        </button>
+        <button id="btnSettings" class="icon-btn" type="button" aria-label="설정">
+          <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 8.9 19a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 8.9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div id="searchRow" class="search-row">
+      <input id="searchInput" type="search" placeholder="메모 · 태그 · 링크 검색" autocomplete="off" enterkeyhint="search">
+      <button id="btnClearSearch" class="icon-btn small hidden" type="button" aria-label="검색 지우기">✕</button>
+    </div>
+
+    <nav id="viewTabs" class="viewtabs" aria-label="보기 전환">
+      <button class="vt active" data-view="timeline" type="button">타임라인</button>
+      <button class="vt" data-view="photos" type="button">🖼️ 사진</button>
+      <button class="vt" data-view="links" type="button">🔗 링크</button>
+    </nav>
+  </header>
+
+  <!-- 태그 필터 바 -->
+  <div class="tagbar-wrap hidden">
+    <div id="tagbar" class="tagbar" role="tablist" aria-label="태그 필터"></div>
+  </div>
+
+  <!-- 본문 -->
+  <main id="scroller" class="scroller">
+    <section id="pinnedSection" class="pinned-section hidden"></section>
+    <div id="timeline" class="timeline"></div>
+    <div id="altView" class="alt-view hidden"></div>
+  </main>
+
+  <button id="jumpLatest" class="jump-latest hidden" type="button">최신 메시지 ↓</button>
+
+  <!-- 입력바 -->
+  <footer class="composer">
+    <div id="tagSuggest" class="tag-suggest hidden"></div>
+    <div id="pendingTray" class="pending-tray hidden"></div>
+    <div class="composer-row">
+      <button id="btnAttach" class="icon-btn attach" type="button" aria-label="사진 첨부">
+        <svg viewBox="0 0 24 24" width="23" height="23" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+      </button>
+      <div class="input-wrap">
+        <textarea id="input" rows="1" placeholder="나에게 메시지 보내기" enterkeyhint="enter" autocomplete="off"></textarea>
+      </div>
+      <button id="btnTag" class="icon-btn tag-btn" type="button" aria-label="태그 삽입">#</button>
+      <button id="btnSend" class="send-btn" type="button" aria-label="전송" disabled>
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <input id="fileInput" type="file" accept="image/*" multiple hidden>
+  </footer>
+
+  <div id="dropZone" class="drop-zone"><div>사진을 여기에 놓으면 첨부돼요</div></div>
+</div>
+
+<!-- 라이트박스 -->
+<div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="사진 보기">
+  <div class="lb-top">
+    <span id="lbCounter" class="lb-counter">1 / 1</span>
+    <div class="lb-actions">
+      <a id="lbDownload" class="lb-btn" download>저장</a>
+      <button id="lbClose" class="lb-btn" type="button" aria-label="닫기">✕</button>
+    </div>
+  </div>
+  <div id="lbStage" class="lb-stage">
+    <img id="lbImg" alt="사진 크게 보기">
+    <button id="lbPrev" class="lb-nav prev" type="button" aria-label="이전 사진">‹</button>
+    <button id="lbNext" class="lb-nav next" type="button" aria-label="다음 사진">›</button>
+  </div>
+</div>
+
+<!-- 메모 액션 시트 -->
+<div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-label="메모 메뉴">
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet-panel">
+    <div class="sheet-grip"></div>
+    <div id="sheetTitle" class="sheet-title"></div>
+    <div id="sheetActions" class="sheet-actions"></div>
+    <button class="sheet-cancel" type="button" data-close>취소</button>
+  </div>
+</div>
+
+<!-- 설정 시트 -->
+<div id="settings" class="sheet" role="dialog" aria-modal="true" aria-label="설정">
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet-panel settings-panel">
+    <div class="sheet-grip"></div>
+    <div class="settings-head">
+      <span>설정</span>
+      <span id="setVersion" class="set-version"></span>
+    </div>
+
+    <section class="set-section">
+      <h3>계정</h3>
+      <div id="setAccount" class="set-account"></div>
+      <button id="setSignOut" class="wide-btn danger hidden" type="button">로그아웃</button>
+      <p id="setAccountNote" class="set-help"></p>
+    </section>
+
+    <section class="set-section">
+      <h3>동기화</h3>
+      <div id="setSyncInfo" class="set-sync"></div>
+      <button id="setSyncNow" class="wide-btn" type="button">지금 동기화</button>
+      <p class="set-help">config.js 에 Supabase URL 과 anon key 를 넣으면 로그인 후 폰·PC 자동 동기화가 켜져요. (supabase_setup.sql 먼저 실행)</p>
+    </section>
+
+    <section class="set-section">
+      <h3>사진 첨부 화질</h3>
+      <label class="set-row">
+        <input type="radio" name="quality" value="optimized">
+        <span class="set-label">웹 최적화<small>장변 1600px · JPEG 82%</small></span>
+      </label>
+      <label class="set-row">
+        <input type="radio" name="quality" value="original">
+        <span class="set-label">원본 유지<small>화질 그대로 (용량 큼)</small></span>
+      </label>
+      <p id="setImageNote" class="set-help"></p>
+    </section>
+
+    <section class="set-section">
+      <h3>입력</h3>
+      <label class="set-row">
+        <input type="checkbox" id="setShiftEnter">
+        <span class="set-label">Shift + Enter 로 전송<small>끄면 Enter·Shift+Enter 모두 줄바꿈 (Ctrl+Enter 는 항상 전송)</small></span>
+      </label>
+    </section>
+
+    <section class="set-section">
+      <h3>잠금</h3>
+      <div class="set-row static">
+        <span id="setPinState" class="set-label">PIN 잠금 꺼짐</span>
+      </div>
+      <button id="setPinBtn" class="wide-btn" type="button">PIN 잠금 설정</button>
+      <button id="btnLockNow" class="wide-btn hidden" type="button">지금 잠그기</button>
+      <label class="set-row">
+        <span class="set-label">자동 잠금<small>다른 앱에 다녀온 뒤 다시 열 때</small></span>
+        <select id="setAutoLock">
+          <option value="0">사용 안 함</option>
+          <option value="1">1분 후</option>
+          <option value="3">3분 후</option>
+          <option value="10">10분 후</option>
+        </select>
+      </label>
+      <p class="set-help">PIN 은 로그인을 유지한 채로 이 기기 화면만 한 번 더 잠그는 용도예요. 계정·사진 보호는 Supabase 로그인과 RLS 정책이 담당합니다.</p>
+    </section>
+
+    <section class="set-section">
+      <h3>데이터</h3>
+      <button id="setExport" class="wide-btn" type="button">JSON 으로 백업</button>
+      <button id="setInstall" class="wide-btn hidden" type="button">홈 화면에 추가</button>
+      <button id="setClear" class="wide-btn danger" type="button">모든 메모 삭제</button>
+      <p class="set-help">Android Chrome → 메뉴(⋮) → '홈 화면에 추가' 로 앱처럼 설치할 수 있어요.</p>
+    </section>
+
+    <button class="sheet-cancel" type="button" data-close>닫기</button>
+  </div>
+</div>
+
+<!-- 로그인 게이트 (config.js 에 Supabase 가 설정됐고 세션이 없을 때만 표시) -->
+<div id="authGate" class="auth-gate" role="dialog" aria-modal="true" aria-label="로그인">
+  <form id="authForm" class="auth-card" autocomplete="on" novalidate>
+    <div class="auth-logo" aria-hidden="true">💬</div>
+    <div class="auth-brand">레퍼런스 메모</div>
+    <div class="auth-sub">나만의 사진 · 링크 메모장</div>
+
+    <label class="auth-field">
+      <span>이메일</span>
+      <input id="authEmail" type="email" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="you@example.com">
+    </label>
+    <label class="auth-field">
+      <span>비밀번호</span>
+      <input id="authPass" type="password" autocomplete="current-password" placeholder="••••••••">
+    </label>
+
+    <label class="auth-keep">
+      <input id="authKeep" type="checkbox" checked>
+      <span>로그인 유지</span>
+    </label>
+
+    <div id="authError" class="auth-error hidden" role="alert"></div>
+
+    <button id="authSubmit" class="auth-btn" type="submit">로그인</button>
+    <button id="authLocalBtn" class="auth-local hidden" type="button">로컬 미리보기 모드로 열기</button>
+
+    <p class="auth-help">계정은 Supabase 대시보드 → Authentication → Users 에서 본인 이메일로 하나만 만들어 두세요. 회원가입은 꺼져 있습니다.</p>
+  </form>
+</div>
+
+<!-- PIN 잠금 -->
+<div id="lock" class="lock" role="dialog" aria-modal="true" aria-label="잠금 해제">
+  <div class="lock-card">
+    <div class="lock-icon">🔒</div>
+    <div class="lock-title">레퍼런스 메모</div>
+    <div id="lockMsg" class="lock-msg">PIN 4~6자리를 입력해 주세요</div>
+    <div id="lockDots" class="lock-dots"></div>
+    <div id="keypad" class="keypad">
+      <button type="button" data-key="1">1</button>
+      <button type="button" data-key="2">2</button>
+      <button type="button" data-key="3">3</button>
+      <button type="button" data-key="4">4</button>
+      <button type="button" data-key="5">5</button>
+      <button type="button" data-key="6">6</button>
+      <button type="button" data-key="7">7</button>
+      <button type="button" data-key="8">8</button>
+      <button type="button" data-key="9">9</button>
+      <button type="button" class="key-sub" data-key="back">⌫</button>
+      <button type="button" data-key="0">0</button>
+      <button type="button" class="key-ok" data-key="ok">확인</button>
+    </div>
+    <input id="lockInput" class="hidden" inputmode="numeric" autocomplete="off" aria-hidden="true">
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<noscript><p style="padding:20px;font:14px sans-serif">이 앱은 JavaScript 가 필요해요.</p></noscript>
+
+<script src="config.js"></script>
+<script src="js/idb.js"></script>
+<script src="js/supabase-rest.js"></script>
+<script src="js/store.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
