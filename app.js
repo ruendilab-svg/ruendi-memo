@@ -2537,7 +2537,7 @@
 
     els.jumpLatest.addEventListener('click', function () { scrollToBottom(true); });
     els.scroller.addEventListener('scroll', function () {
-      els.jumpLatest.classList.toggle('hidden', isNearBottom() || state.view !== 'timeline');
+      els.jumpLatest.classList.toggle('hidden', isNearBottom() || state.view !== 'memo');
     });
 
     // 붙여넣기 이미지
