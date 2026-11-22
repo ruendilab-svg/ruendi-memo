@@ -2778,7 +2778,7 @@
     // 서비스 워커
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
       window.addEventListener('load', function () {
-        navigator.serviceWorker.register('sw.js').then(function (reg) {
+        navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(function (reg) {
           if (reg && reg.update) reg.update().catch(function () { /* ignore */ });
         }).catch(function (err) {
           console.warn('[memo] service worker 등록 실패', err);

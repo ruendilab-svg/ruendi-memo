@@ -1,8 +1,10 @@
 /* ============================================================
  * sw.js — 앱 셸 캐시 (오프라인에서도 타임라인이 열린다)
- *  · 같은 출처의 정적 파일: 캐시 우선 + 백그라운드 갱신
+ *  · 같은 출처의 정적 파일: 네트워크 우선 + 캐시 대체 (온라인이면 항상 최신)
  *  · Supabase 등 외부 요청: 네트워크 그대로 (동기화는 항상 최신)
- *  · 앱 셸 버전을 올리면 새 캐시로 교체된다.
+ *  · 앱 셸 버전을 올리면 새 캐시로 교체되고, 새 워커가 바로 활성화된다.
+ *  · install 단계 fetch 는 cache:'reload' 로 HTTP 캐시를 건너뛴다
+ *    (배포 직후 브라우저 HTTP 캐시에 남은 구버전 파일이 새 캐시에 들어가는 것을 막는다)
  * ============================================================ */
 var CACHE = 'memo-app-shell-v1.3.0';
 
@@ -24,9 +26,14 @@ var SHELL = [
 self.addEventListener('install', function (event) {
   event.waitUntil(
     caches.open(CACHE).then(function (cache) {
-      return cache.addAll(SHELL).catch(function (err) {
-        console.warn('[sw] 일부 파일 캐시 실패', err);
-      });
+      return Promise.all(SHELL.map(function (url) {
+        // cache: 'reload' → HTTP 캐시의 구버전 사본이 아니라 서버의 최신 사본을 받는다
+        return fetch(new Request(url, { cache: 'reload' })).then(function (res) {
+          if (res && res.ok) return cache.put(url, res);
+        }).catch(function (err) {
+          console.warn('[sw] 캐시 실패', url, err);
+        });
+      }));
     }).then(function () { return self.skipWaiting(); })
   );
 });
@@ -49,31 +56,24 @@ self.addEventListener('fetch', function (event) {
   try { url = new URL(req.url); } catch (e) { return; }
   if (url.origin !== self.location.origin) return; // Supabase 등 외부는 그대로 통과
 
-  if (req.mode === 'navigate') {
-    event.respondWith(
-      fetch(req).then(function (res) {
-        var copy = res.clone();
-        caches.open(CACHE).then(function (c) { c.put('./index.html', copy); });
-        return res;
-      }).catch(function () {
-        return caches.match('./index.html').then(function (hit) {
-          return hit || caches.match('./');
+  // 앱 셸 문서·스크립트·스타일 = 네트워크 우선, 실패하면 캐시(오프라인)
+  var network = fetch(req).then(function (res) {
+    if (res && res.ok) {
+      var copy = res.clone();
+      caches.open(CACHE).then(function (c) { c.put(req, copy); });
+    }
+    return res;
+  }).catch(function () {
+    return caches.match(req).then(function (hit) {
+      if (hit) return hit;
+      if (req.mode === 'navigate') {
+        return caches.match('./index.html').then(function (ix) {
+          return ix || caches.match('./');
         });
-      })
-    );
-    return;
-  }
+      }
+      throw new Error('offline');
+    });
+  });
 
-  event.respondWith(
-    caches.match(req).then(function (hit) {
-      var network = fetch(req).then(function (res) {
-        if (res && res.ok) {
-          var copy = res.clone();
-          caches.open(CACHE).then(function (c) { c.put(req, copy); });
-        }
-        return res;
-      }).catch(function () { return hit; });
-      return hit || network;
-    })
-  );
+  event.respondWith(network);
 });
