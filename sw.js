@@ -56,8 +56,9 @@ self.addEventListener('fetch', function (event) {
   try { url = new URL(req.url); } catch (e) { return; }
   if (url.origin !== self.location.origin) return; // Supabase 등 외부는 그대로 통과
 
-  // 앱 셸 문서·스크립트·스타일 = 네트워크 우선, 실패하면 캐시(오프라인)
-  var network = fetch(req).then(function (res) {
+  // 앱 셸 문서·스크립트·스타일 = 네트워크 우선(HTTP 캐시 재검증), 실패하면 캐시(오프라인)
+  //   cache: 'no-cache' → 브라우저 HTTP 캐시의 구버전 사본(max-age)에 갇히지 않고 서버에 재검증한다
+  var network = fetch(new Request(req, { cache: 'no-cache' })).then(function (res) {
     if (res && res.ok) {
       var copy = res.clone();
       caches.open(CACHE).then(function (c) { c.put(req, copy); });
