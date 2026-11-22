@@ -8,6 +8,7 @@
   var idb = window.MemoIdb;
   var U = window.MemoUtil;
   var APP_VERSION = '1.3.0';
+  window.__appVersion = APP_VERSION;   // index.html 의 버전 가드가 비교하는 값
 
   var SET_KEY = 'memo.settings.v1';
   var PIN_KEY = 'memo.pin.v1';
