@@ -271,6 +271,46 @@
     return name;
   }
 
+  /* 직접 추가한 분류가 0건이면 길게 눌러(또는 우클릭) 지울 수 있다 */
+  function attachCatChipOps(chip, kind, cat, count) {
+    if (!cat || count > 0) return;
+    var timer = null;
+    var fired = false;
+    chip.addEventListener('pointerdown', function (e) {
+      if (e.button && e.button !== 0) return;
+      fired = false;
+      clearTimeout(timer);
+      timer = setTimeout(function () { fired = true; removeCategory(kind, cat); }, 550);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel', 'pointermove'].forEach(function (ev) {
+      chip.addEventListener(ev, function () { clearTimeout(timer); });
+    });
+    chip.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      removeCategory(kind, cat);
+    });
+    chip.addEventListener('click', function (e) {
+      if (fired) { e.preventDefault(); e.stopPropagation(); fired = false; }
+    }, true);
+  }
+
+  function removeCategory(kind, cat) {
+    var lists = { link: state.customCats, photo: state.photoCustomCats, memo: state.memoCustomCats };
+    var saves = { link: saveCustomCats, photo: savePhotoCats, memo: saveMemoCats };
+    var list = lists[kind];
+    if (!list) return;
+    var i = list.indexOf(cat);
+    if (i === -1) { toast('기본 분류는 지울 수 없어요'); return; }
+    if (!window.confirm("'" + cat + "' 분류를 지울까요?\n(이 분류에 항목이 0건일 때만 지울 수 있어요)")) return;
+    list.splice(i, 1);
+    saves[kind]();
+    toast("'" + cat + "' 분류를 지웠어요");
+    updateLinkCatBar();
+    updatePhotoCatBar();
+    updateMemoCatBar();
+    render();
+  }
+
   function catChipBtn(cat, current, onPick) {
     var b = el('button', 'chip small' + (cat === current ? ' active' : ''), cat);
     b.type = 'button';
@@ -411,6 +451,7 @@
         state.memoCat = (cat === null || active) ? null : cat;
         render();
       });
+      attachCatChipOps(b, 'memo', cat, count);
       return b;
     };
     els.memoCatRow.appendChild(chipFor('전체', null, list.length));
@@ -1255,6 +1296,7 @@
         state.photoCat = (cat === null || active) ? null : cat;
         render();
       });
+      attachCatChipOps(b, 'photo', cat, count);
       return b;
     };
     row.appendChild(chipFor('전체', null, cells.length));
@@ -1357,6 +1399,7 @@
         state.linkCat = (cat === null || active) ? null : cat;
         render();
       });
+      attachCatChipOps(b, 'link', cat, count);
       return b;
     };
     row.appendChild(chipFor('전체', null, items.length));
