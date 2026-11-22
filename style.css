@@ -231,6 +231,18 @@ body.locked #app { filter: blur(1px); }
 }
 .chip.active .chip-count { background: rgba(254, 229, 0, .55); color: #4a3d00; }
 .chip.small { height: 26px; font-size: 12px; padding: 0 10px; }
+/* 항목이 0건인 직접 추가 분류 — 칩 안의 ✕ 로 지운다 */
+.chip-x {
+  margin-left: 1px;
+  margin-right: -3px;
+  padding: 0 3px;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  color: #7d8b96;
+  cursor: pointer;
+}
+.chip-x:hover { color: #b0453a; }
 
 /* ---------------- 본문 ---------------- */
 .scroller {

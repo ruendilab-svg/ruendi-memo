@@ -271,9 +271,22 @@
     return name;
   }
 
-  /* 직접 추가한 분류가 0건이면 길게 눌러(또는 우클릭) 지울 수 있다 */
+  /* 직접 추가한 분류가 0건이면 길게 눌러(또는 우클릭, 칩 안 ✕) 지울 수 있다 */
   function attachCatChipOps(chip, kind, cat, count) {
     if (!cat || count > 0) return;
+    var custom = ({ link: state.customCats, photo: state.photoCustomCats, memo: state.memoCustomCats })[kind] || [];
+    if (custom.indexOf(cat) !== -1) {
+      var x = el('span', 'chip-x', '✕');
+      x.setAttribute('role', 'button');
+      x.setAttribute('aria-label', '빈 분류 삭제');
+      x.title = '이 분류 지우기';
+      x.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        removeCategory(kind, cat);
+      });
+      chip.appendChild(x);
+    }
     var timer = null;
     var fired = false;
     chip.addEventListener('pointerdown', function (e) {
