@@ -8,16 +8,21 @@
  * ============================================================ */
 var CACHE = 'memo-app-shell-v1.3.0';
 
+/* index.html 이 요청하는 URL 과 같은 이름(버전 썗 포함)으로 미리 받아 둔다.
+ *  파일 주소에 버전을 붙이면, 배포 직후 예전 캐시(서비스워커·브라우저 HTTP 캐시)에
+ *  구버전 파일이 남아 있어도 새 주소라 캐시에 걸리지 않고 바로 새 파일을 받는다. */
+var V = '?v=1.3.0';
+
 var SHELL = [
   './',
   './index.html',
-  './style.css',
-  './app.js',
-  './config.js',
+  './style.css' + V,
+  './app.js' + V,
+  './config.js' + V,
   './manifest.json',
-  './js/idb.js',
-  './js/store.js',
-  './js/supabase-rest.js',
+  './js/idb.js' + V,
+  './js/store.js' + V,
+  './js/supabase-rest.js' + V,
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png'
