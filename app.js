@@ -7,7 +7,7 @@
   var Store = window.MemoStore;
   var idb = window.MemoIdb;
   var U = window.MemoUtil;
-  var APP_VERSION = '1.3.0';
+  var APP_VERSION = '1.3.1';
   window.__appVersion = APP_VERSION;   // index.html 의 버전 가드가 비교하는 값
 
   var SET_KEY = 'memo.settings.v1';
@@ -522,9 +522,10 @@
     els.memoCatBar.classList.remove('hidden');
   }
 
-  /* 📝 메모 탭에 보이는 메모 = 사진도 링크도 없는 글자 메모 */
+  /* 📝 메모 탭에 보이는 메모 = 사진은 없고, 링크도 없거나(기본) 메모 분류가 붙은 글자 메모
+   *  · '메모 분류'가 붙은 메모는 구버전 캐시가 links 를 채워 놓았어도 메모 탭에 남는다 */
   function isMemoTabMemo(m) {
-    return !(m.images || []).length && !(m.links || []).length;
+    return !(m.images || []).length && (!(m.links || []).length || !!memoCategoryOfMemo(m));
   }
 
   function getPin() {
@@ -1739,7 +1740,7 @@
     }
 
     // 🔗 링크로 보이던 메모를 📝 메모 탭 분류로 옮긴다 (링크 카드를 걱어내고 글자만)
-    if ((m.links || []).length && !(m.images || []).length) {
+    if ((m.links || []).length && !(m.images || []).length && !memoCategoryOfMemo(m)) {
       items.splice(items.length - 1, 0, {
         icon: '📝',
         label: '📝 메모 탭으로 옮기기',
@@ -2708,19 +2709,24 @@
     // 캐시 지우고 새로고침 (메모 데이터는 IndexedDB·클라우드에 있어 지워지지 않는다)
     if (els.setCacheReset) els.setCacheReset.addEventListener('click', function () {
       els.setCacheReset.disabled = true;
-      var jobs = [];
-      if ('caches' in window) {
-        jobs.push(caches.keys().then(function (keys) {
-          return Promise.all(keys.map(function (k) { return caches.delete(k); }));
-        }));
-      }
-      if ('serviceWorker' in navigator) {
-        jobs.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
-          return Promise.all(regs.map(function (r) { return r.unregister(); }));
-        }));
-      }
-      Promise.all(jobs).catch(function () { /* ignore */ }).then(function () {
-        location.reload();
+      /* 올리지 못한 변경(dirty)이 없으면 동기화 커서(lastPull)도 비운다
+       *  → 서버에서 통째로 다시 받아 로컬 캐시가 낡았어도 바로 잡힌다 */
+      var cursor = (Store.resetSyncCursor ? Store.resetSyncCursor() : Promise.resolve(false));
+      cursor.catch(function () { return false; }).then(function () {
+        var jobs = [];
+        if ('caches' in window) {
+          jobs.push(caches.keys().then(function (keys) {
+            return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+          }));
+        }
+        if ('serviceWorker' in navigator) {
+          jobs.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
+            return Promise.all(regs.map(function (r) { return r.unregister(); }));
+          }));
+        }
+        return Promise.all(jobs).catch(function () { /* ignore */ }).then(function () {
+          location.reload();
+        });
       });
     });
 

@@ -208,6 +208,8 @@ Settings → Pages → Branch `main` / `/docs`
 **동기화**
 - 모든 변경은 **먼저 기기에 저장**(IndexedDB)하고, 온라인이면 서버로 업로드합니다. 전송 실패분은 `dirty` 로 남아 다음 주기에 재시도합니다.
 - 서버 → 기기는 `updated_at` 커서로 증분 다운로드하고, 같은 메모는 **더 최신 `updated_at` 이 이깁니다**(마지막 쓰기 승리).
+- 불러온 기기 캐시는 항상 `normalize()` 를 거칩니다. **`__mcat:` 메모 분류가 붙은 메모는 `links` 를 빈 배열로 되돌리고 IndexedDB 에도 정리**하므로, 구버전이 남긴 '메모인데 링크로 보이던' 오염 캐시도 앱을 열면 즉시 📝 메모 탭으로 돌아옵니다(v1.3.1).
+- 설정 → **캐시 지우고 새로고침** 은 올리지 못한 변경(`dirty`)이 없을 때 동기화 커서(`lastPull`)도 버려서 서버에서 처음부터 다시 받습니다.
 - 삭제는 **소프트 삭제**(`deleted=true`)로 전파되고, 스토리지 사진 파일도 함께 삭제 요청합니다.
 - 앱이 화면에 보이는 동안만 폴링합니다(기본 8초). 탭이 백그라운드면 멈춰서 무료 트래픽을 아낍니다.
 - 메모 행에는 항상 `user_id` 가 들어가고(RLS 기준), 사진은 **비공개 버킷**의 `<user_id>/<메모id>/<파일>` 경로에 올라갑니다. 다른 기기에서는 그 경로를 **Bearer 토큰으로만** 내려받아 IndexedDB 에 캐시합니다. 공개 URL 은 쓰지 않습니다.
@@ -229,13 +231,13 @@ pip install playwright pillow
 python3 -m playwright install chromium
 
 cd memo-app
-python3 test/e2e_test.py     # 217 checks : 로컬 기능(링크·분류·여러 줄 칩 바 포함) + 로그인 게이트·비공개 사진·로그아웃·세션 복원/refresh
-python3 test/sync_test.py    # 28 checks : 로그인 후 폰↔PC 업로드/다운로드/수정/삭제/링크 분류 전파 + Bearer 이미지
+python3 test/e2e_test.py     # 288 checks : 로컬 기능(링크·분류·여러 줄 칩 바 포함) + 로그인 게이트·비공개 사진·로그아웃·세션 복원/refresh + 구버전 캐시 오염 복구(회귀)
+python3 test/sync_test.py    # 36 checks : 로그인 후 폰↔PC 업로드/다운로드/수정/삭제/링크 분류 전파 + Bearer 이미지
 ```
 
 `e2e_test.py` 는 `preview_mobile.png`(390×844), `preview_desktop.png`(1280×860), `preview_auth_login.png`(로그인 화면)를 새로 만듭니다.
 Auth 모드는 `test/mock_supabase.py` 목 서버(Auth 토큰·RLS·비공개 Storage 흉내)로 검증합니다.
-최근 실행 결과: **e2e 217/217, sync 28/28 통과, 콘솔 에러 0건**.
+최근 실행 결과: **e2e 288/288, sync 36/36 통과, 콘솔 에러 0건** (2026-11-22, v1.3.1).
 
 ---
 

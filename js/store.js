@@ -331,17 +331,36 @@
   function normalize(m) {
     m.content = typeof m.content === 'string' ? m.content : '';
     m.tags = Array.isArray(m.tags) && m.tags.length ? m.tags : parseTags(m.content);
-    // 📝 메모 탭 메모는 본문에 주소가 있어도 링크를 새로 뽑지 않는다 (저장된 links 만 유지)
-    m.links = memoCategoryOf(m)
-      ? withCategories(Array.isArray(m.links) ? m.links.filter(function (l) { return l && l.url; }) : [])
-      : linksFromContent(m.content, m.links);
-    m.links = withCategories(m.links);
+    // 📝 메모 탭 메모는 링크 카드를 갖지 않는다.
+    // v1.1.x 가 '__mcat:' 를 모른 채 본문 주소를 links 로 채워 둔 레코드도 여기서 빈 배열로 되돌린다.
+    m.links = memoCategoryOf(m) ? [] : withCategories(linksFromContent(m.content, m.links));
     m.images = Array.isArray(m.images) ? withImageCategories(m.images.filter(function (i) { return i && i.key; })) : [];
     m.pinned = !!m.pinned;
     m.deleted = !!m.deleted;
     if (!m.created_at) m.created_at = new Date().toISOString();
     if (!m.updated_at) m.updated_at = m.created_at;
     return m;
+  }
+
+  /* 기기 캐시 복구 — 구버전(v1.1.x)이 남긴 오염 레코드
+   *  · 그 버전은 '__mcat:' 마커를 모른 채 서버에서 받은 메모의 본문 주소를 links 로 다시 채워 IndexedDB 에 저장했다
+   *  · 불러올 때 normalize 가 links=[] 로 되돌리고, 고친 레코드는 IndexedDB 에도 다시 써서 다음 실행부터 깨끗하다
+   *  · 서버 데이터가 이미 옳으므로 dirty 는 세우지 않는다(불필요한 재업로드 없음)
+   */
+  function repairLoadedRows(rows) {
+    var fixed = [];
+    var out = (rows || []).map(function (row) {
+      var polluted = !!memoCategoryOf(row) &&
+        Array.isArray(row.links) && row.links.some(function (l) { return !!(l && l.url); });
+      var m = normalize(row);
+      if (polluted) fixed.push(m);
+      return m;
+    });
+    if (fixed.length) {
+      idb.bulkPut('memos', fixed.map(function (m) { return JSON.parse(JSON.stringify(m)); }))
+        .catch(function (e) { console.warn('[memo] 캐시 복구 저장 실패', e); });
+    }
+    return out;
   }
 
   function fromRow(row) {
@@ -435,7 +454,7 @@
 
     // ----- 로컬 모드 (config 비어 있음) : 기존과 동일 -----
     try { rows = await idb.all('memos'); } catch (e) { console.warn(e); }
-    memos = (rows || []).map(normalize);
+    memos = repairLoadedRows(rows);
     sortMemos();
 
     cleanupOrphanBlobs();
@@ -460,7 +479,7 @@
 
     var rows = [];
     try { rows = await idb.all('memos'); } catch (e) { console.warn(e); }
-    memos = (rows || []).map(normalize);
+    memos = repairLoadedRows(rows);
     sortMemos();
 
     emit();
@@ -935,6 +954,13 @@
     }
   }
 
+  /* 설정 → 캐시 지우고 새로고침 : 올라가지 않은 변경(dirty)이 없으면 서버에서 처음부터 다시 받도록 커서를 비운다 */
+  async function resetSyncCursor() {
+    if (memos.some(function (m) { return m.dirty; })) return false;
+    try { await idb.setMeta('lastPull', ''); } catch (e) { /* ignore */ }
+    return true;
+  }
+
   function startCloudSync() {
     if (!client || !auth.signedIn) return;
     setStatus({ state: 'syncing', text: '동기화 중…', error: null });
@@ -1012,6 +1038,7 @@
     onStatus: function (fn) { statusListeners.add(fn); return function () { statusListeners.delete(fn); }; },
     getStatus: function () { return status; },
     sync: sync,
+    resetSyncCursor: resetSyncCursor,
     isCloud: isCloud,
     exportJson: exportJson,
 
