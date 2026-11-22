@@ -7,7 +7,7 @@
   var Store = window.MemoStore;
   var idb = window.MemoIdb;
   var U = window.MemoUtil;
-  var APP_VERSION = '1.2.0';
+  var APP_VERSION = '1.3.0';
 
   var SET_KEY = 'memo.settings.v1';
   var PIN_KEY = 'memo.pin.v1';
@@ -1107,8 +1107,19 @@
     return row;
   }
 
-  function messageEl(m) {
-    var row = el('div', 'msg' + (m.pinned ? ' pinned' : ''));
+  /* 🕒 타임라인 피드 — 이 항목이 사진·링크·메모 중 무엇인지 한눈에 */
+  function feedTypeBadge(m) {
+    var parts = [];
+    var nImg = (m.images || []).length;
+    var nLink = (m.links || []).length;
+    if (nImg) parts.push('🖼️ 사진' + (nImg > 1 ? ' ' + nImg : ''));
+    if (nLink) parts.push('🔗 링크');
+    if (!nImg && !nLink) parts.push('📝 메모');
+    return el('div', 'feed-type', parts.join(' · '));
+  }
+
+  function messageEl(m, feed) {
+    var row = el('div', 'msg' + (m.pinned ? ' pinned' : '') + (feed ? ' in-feed' : ''));
     row.setAttribute('data-id', m.id);
 
     var time = el('span', 'msg-time');
@@ -1142,6 +1153,7 @@
       bubble.appendChild(bar);
       setTimeout(function () { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 30);
     } else {
+      if (feed) bubble.appendChild(feedTypeBadge(m));
       var catRow = catBadgeRow(m);
       if (catRow) bubble.appendChild(catRow);
       if (hasImages) bubble.appendChild(imageGrid(m));
@@ -1291,6 +1303,49 @@
     }
 
     els.scroller.classList.remove('alt-mode');
+    hydrateImages();
+  }
+
+  /* 🕒 타임라인 탭 = 사진·링크·글자 메모 구분 없이 전부를 최신순(맨 위가 가장 최근)으로 모아 본다 */
+  function feedTime(m) {
+    var t = new Date(m.updated_at || m.created_at).getTime();
+    return isNaN(t) ? 0 : t;
+  }
+
+  function renderFeed(list) {
+    els.pinnedSection.innerHTML = '';
+    els.pinnedSection.classList.add('hidden');
+    els.altView.innerHTML = '';
+    els.altView.classList.add('hidden');
+    els.timeline.classList.remove('hidden');
+    els.timeline.innerHTML = '';
+    els.scroller.classList.remove('alt-mode');
+
+    var sorted = list.slice().sort(function (a, b) {
+      var d = feedTime(b) - feedTime(a);
+      if (d) return d;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+
+    if (!sorted.length) {
+      els.timeline.appendChild(emptyState('timeline'));
+      return;
+    }
+
+    var head = el('div', 'feed-head');
+    head.appendChild(el('span', '', '🕒 최신순 · ' + sorted.length + '건'));
+    els.timeline.appendChild(head);
+
+    var lastKey = null;
+    sorted.forEach(function (m) {
+      var k = U.dateKey(m.created_at);
+      if (k !== lastKey) {
+        els.timeline.appendChild(dateDivider(m.created_at));
+        lastKey = k;
+      }
+      els.timeline.appendChild(messageEl(m, true));
+    });
+
     hydrateImages();
   }
 
@@ -1550,6 +1605,9 @@
       renderLinks(list.filter(function (m) {
         return !(m.images || []).length && !memoCategoryOfMemo(m);
       }));
+    } else if (state.view === 'timeline') {
+      // 🕒 타임라인 탭 = 사진·링크·글자 메모 전부 최신순
+      renderFeed(list);
     } else {
       renderTimeline(state.memoCat
         ? memoOnly.filter(function (m) { return memoCategoryName(m) === state.memoCat; })
@@ -2023,8 +2081,9 @@
       autoGrow();
       hideTagSuggest();
 
-      // 보낸 메모가 실제로 자리잡는 탭으로 따라간다
-      var landing = images.length ? 'photos'
+      // 보낸 메모가 실제로 자리잡는 탭으로 따라간다 (🕒 타임라인에서 보냈으면 타임라인 유지)
+      var landing = state.view === 'timeline' ? 'timeline'
+        : images.length ? 'photos'
         : (inMemoTab ? 'memo' : ((U.parseLinks(text).length) ? 'links' : 'memo'));
       if (state.view !== landing) {
         state.tag = null;
@@ -2035,7 +2094,8 @@
       updateMemoCatBar();
       updateLinkCatBar();
       render();
-      scrollToBottom(true);
+      if (landing === 'timeline') els.scroller.scrollTop = 0;
+      else scrollToBottom(true);
       if (memoCategory && U.parseLinks(text).length) toast('📝 메모로 저장했어요');
     }).catch(function (e) {
       console.error(e);
@@ -2392,7 +2452,8 @@
     updateLinkCatBar();
     var near = isNearBottom();
     render();
-    if (near && view === 'memo') scrollToBottom(false);
+    if (view === 'timeline') els.scroller.scrollTop = 0;   // 최신 항목이 맨 위
+    else if (near && view === 'memo') scrollToBottom(false);
   }
 
   function bindEvents() {
@@ -2630,6 +2691,38 @@
       toast('JSON 백업을 내려받았어요');
     });
 
+    // 서비스 워커 : 새 버전이 제어를 갖으면 한 번 새로고침해 구버전 캐시에 잡히지 않게 한다
+    if ('serviceWorker' in navigator) {
+      var swHadController = !!navigator.serviceWorker.controller;
+      var swReloading = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (!swHadController || swReloading) return;   // 첫 설치 등 이전 컨트롤러가 없으면 새로고침하지 않는다
+        swReloading = true;
+        var busy = (els.input && els.input.value.trim()) || state.pending.length;
+        if (busy) { toast('새 버전이 준비됐어요 · 설정 → 캐시 지우고 새로고침'); return; }
+        location.reload();
+      });
+    }
+
+    // 캐시 지우고 새로고침 (메모 데이터는 IndexedDB·클라우드에 있어 지워지지 않는다)
+    if (els.setCacheReset) els.setCacheReset.addEventListener('click', function () {
+      els.setCacheReset.disabled = true;
+      var jobs = [];
+      if ('caches' in window) {
+        jobs.push(caches.keys().then(function (keys) {
+          return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+        }));
+      }
+      if ('serviceWorker' in navigator) {
+        jobs.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
+          return Promise.all(regs.map(function (r) { return r.unregister(); }));
+        }));
+      }
+      Promise.all(jobs).catch(function () { /* ignore */ }).then(function () {
+        location.reload();
+      });
+    });
+
     els.setClear.addEventListener('click', function () {
       var ok = window.confirm('모든 메모를 삭제할까요?\n(사진 파일도 함께 지워지고, 클라우드 동기화 중이면 다른 기기에서도 사라집니다)');
       if (!ok) return;
@@ -2685,7 +2778,9 @@
     // 서비스 워커
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
       window.addEventListener('load', function () {
-        navigator.serviceWorker.register('sw.js').catch(function (err) {
+        navigator.serviceWorker.register('sw.js').then(function (reg) {
+          if (reg && reg.update) reg.update().catch(function () { /* ignore */ });
+        }).catch(function (err) {
           console.warn('[memo] service worker 등록 실패', err);
         });
       });
@@ -2698,7 +2793,7 @@
       var near = isNearBottom();
       state.memos = memos;
       render();
-      if (near) scrollToBottom(false);
+      if (near && state.view !== 'timeline') scrollToBottom(false);
     });
 
     Store.onStatus(function (st) {
@@ -2798,6 +2893,7 @@
     els.btnLockNow = $('#btnLockNow');
     els.setExport = $('#setExport');
     els.setClear = $('#setClear');
+    els.setCacheReset = $('#setCacheReset');
     els.setInstall = $('#setInstall');
     els.setVersion = $('#setVersion');
     els.lightbox = $('#lightbox');
