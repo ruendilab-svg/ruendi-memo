@@ -48,6 +48,34 @@
   var LINK_CATEGORIES = ['패키지 관련', '레퍼런스', '디자인 정보', '기타 정보'];
   var DEFAULT_LINK_CATEGORY = '기타 정보';
 
+  /* ---------- 메모 탭 분류 ----------
+   *  DB 스키마를 건드리지 않고 tags 배열 안에 '__mcat:<분류>' 내부 마커로 저장한다.
+   *  · 이 마커가 있는 메모는 '📝 메모' 탭 전용 → 본문에 주소가 있어도 링크로 뽑지 않는다
+   *  · UI(태그 목록·자동완성·말풍선 태그)에는 절대 보이지 않는다
+   */
+  var MEMO_CAT_PREFIX = '__mcat:';
+  var DEFAULT_MEMO_CATEGORY = '일반';
+
+  function memoCatTag(category) {
+    var c = String(category == null ? '' : category).trim() || DEFAULT_MEMO_CATEGORY;
+    return MEMO_CAT_PREFIX + c;
+  }
+
+  function memoCategoryOf(m) {
+    var tags = (m && m.tags) || [];
+    for (var i = 0; i < tags.length; i++) {
+      var t = String(tags[i] == null ? '' : tags[i]);
+      if (t.indexOf(MEMO_CAT_PREFIX) === 0) return t.slice(MEMO_CAT_PREFIX.length).trim() || DEFAULT_MEMO_CATEGORY;
+    }
+    return '';
+  }
+
+  function visibleTags(tags) {
+    return (tags || []).filter(function (t) {
+      return String(t == null ? '' : t).indexOf(MEMO_CAT_PREFIX) !== 0;
+    });
+  }
+
   function linkCategoryName(cat) {
     var c = String(cat == null ? '' : cat).trim();
     return c || DEFAULT_LINK_CATEGORY;
@@ -251,7 +279,12 @@
     youtubeWatchUrl: youtubeWatchUrl,
     LINK_CATEGORIES: LINK_CATEGORIES,
     DEFAULT_LINK_CATEGORY: DEFAULT_LINK_CATEGORY,
-    linkCategoryName: linkCategoryName
+    linkCategoryName: linkCategoryName,
+    MEMO_CAT_PREFIX: MEMO_CAT_PREFIX,
+    DEFAULT_MEMO_CATEGORY: DEFAULT_MEMO_CATEGORY,
+    memoCategoryOf: memoCategoryOf,
+    memoCatTag: memoCatTag,
+    visibleTags: visibleTags
   };
 
   /* ---------- 상태 알림 ---------- */
@@ -298,7 +331,10 @@
   function normalize(m) {
     m.content = typeof m.content === 'string' ? m.content : '';
     m.tags = Array.isArray(m.tags) && m.tags.length ? m.tags : parseTags(m.content);
-    m.links = linksFromContent(m.content, m.links);
+    // 📝 메모 탭 메모는 본문에 주소가 있어도 링크를 새로 뽑지 않는다 (저장된 links 만 유지)
+    m.links = memoCategoryOf(m)
+      ? withCategories(Array.isArray(m.links) ? m.links.filter(function (l) { return l && l.url; }) : [])
+      : linksFromContent(m.content, m.links);
     m.links = withCategories(m.links);
     m.images = Array.isArray(m.images) ? withImageCategories(m.images.filter(function (i) { return i && i.key; })) : [];
     m.pinned = !!m.pinned;
@@ -556,11 +592,19 @@
     var now = new Date().toISOString();
     var content = String((input && input.content) || '');
     var category = linkCategoryName(input && input.linkCategory);
+    var memoCategory = String((input && input.memoCategory) || '').trim();
+    var tags = parseTags(content);
+    var links = parseLinks(content).map(function (l) { return { url: l.url, category: category }; });
+    if (memoCategory) {
+      // 📝 메모 탭에서 보낸 글은 주소가 섞여 있어도 글자 그대로 저장한다
+      tags = visibleTags(tags).concat([memoCatTag(memoCategory)]);
+      links = [];
+    }
     var memo = normalize({
       id: uuid(),
       content: content,
-      tags: parseTags(content),
-      links: parseLinks(content).map(function (l) { return { url: l.url, category: category }; }),
+      tags: tags,
+      links: links,
       images: ((input && input.images) || []).map(function (img) {
         return Object.assign({}, img, {
           category: linkCategoryName(img.category || (input && input.photoCategory))
@@ -586,10 +630,14 @@
     if (!m) return null;
     if (typeof patch.content === 'string') {
       m.content = patch.content;
-      m.tags = parseTags(m.content);
+      // 📝 메모 분류 마커는 본문을 고쳐도 그대로 둔다
+      m.tags = parseTags(m.content).concat((m.tags || []).filter(function (t) {
+        return String(t).indexOf(MEMO_CAT_PREFIX) === 0;
+      }));
       // 본문이 바뀌어도 이미 고른 링크 분류는 url 이 같은 한 유지한다
-      m.links = withCategories(linksFromContent(m.content, m.links));
+      m.links = memoCategoryOf(m) ? (m.links || []) : withCategories(linksFromContent(m.content, m.links));
     }
+    if (Array.isArray(patch.tags)) m.tags = patch.tags;
     if (Array.isArray(patch.images)) m.images = patch.images;
     if (Array.isArray(patch.links)) m.links = withCategories(patch.links);
     if (typeof patch.pinned === 'boolean') m.pinned = patch.pinned;
@@ -638,6 +686,43 @@
     });
     if (!changed) return m;
     return updateMemo(id, { images: images });
+  }
+
+  /* 📝 메모 탭 분류 변경 — '__mcat:' 태그만 새 값으로 바꾼다 */
+  async function setMemoCategory(id, category) {
+    var m = byId.get(id);
+    if (!m) return null;
+    var next = String(category == null ? '' : category).trim() || DEFAULT_MEMO_CATEGORY;
+    if (memoCategoryOf(m) === next) return m;
+    m.tags = visibleTags(m.tags).concat([memoCatTag(next)]);
+    m.updated_at = new Date().toISOString();
+    m.dirty = true;
+    await persist(m);
+    emit();
+    queuePush();
+    return m;
+  }
+
+  /* 🔗 링크로 보이던 메모를 📝 메모 탭 분류로 옮긴다 — 링크 카드를 걷어내고 글자만 남긴다 */
+  async function moveToMemoTab(ids, category) {
+    var next = String(category == null ? '' : category).trim() || DEFAULT_MEMO_CATEGORY;
+    var list = Array.isArray(ids) ? ids : [];
+    var moved = 0;
+    for (var i = 0; i < list.length; i++) {
+      var m = byId.get(list[i]);
+      if (!m || m.deleted) continue;
+      m.tags = visibleTags(m.tags).concat([memoCatTag(next)]);
+      m.links = [];
+      m.updated_at = new Date().toISOString();
+      m.dirty = true;
+      await persist(m);
+      moved++;
+    }
+    if (moved) {
+      emit();
+      queuePush();
+    }
+    return moved;
   }
 
   /* 분류 일괄 지정 — links/images 에 URL·key 배열을 주면 그것만, null 이면 그 종류 전체 */
@@ -915,6 +1000,11 @@
     setLinkCategory: setLinkCategory,
     setImageCategory: setImageCategory,
     setCategories: setCategories,
+    setMemoCategory: setMemoCategory,
+    moveToMemoTab: moveToMemoTab,
+    memoCategoryOf: memoCategoryOf,
+    MEMO_CAT_PREFIX: MEMO_CAT_PREFIX,
+    DEFAULT_MEMO_CATEGORY: DEFAULT_MEMO_CATEGORY,
     linkCategoryName: linkCategoryName,
     deleteMemo: deleteMemo,
     clearAll: clearAll,

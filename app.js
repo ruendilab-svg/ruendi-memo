@@ -7,19 +7,22 @@
   var Store = window.MemoStore;
   var idb = window.MemoIdb;
   var U = window.MemoUtil;
-  var APP_VERSION = '1.1.6';
+  var APP_VERSION = '1.2.0';
 
   var SET_KEY = 'memo.settings.v1';
   var PIN_KEY = 'memo.pin.v1';
   var LINK_CAT_KEY = 'memo.linkcats.v1';
   var PHOTO_CAT_KEY = 'memo.photocats.v1';
+  var MEMO_CAT_KEY = 'memo.memocats.v1';
 
-  /* 분류별 아이콘 — 타임라인·사진 탭·링크 탭에서 같은 표기를 쓴다 */
+  /* 분류별 아이콘 — 말풍선·사진 탭·링크 탭·메모 탭에서 같은 표기를 쓴다 */
   var CAT_ICONS = {
     '패키지 관련': '📦',
     '레퍼런스': '🎨',
     '디자인 정보': '💡',
-    '기타 정보': '📌'
+    '기타 정보': '📌',
+    '일반': '📝',
+    '시그스튜디오대본': '🎬'
   };
 
   function catIcon(cat) { return CAT_ICONS[cat] || '📁'; }
@@ -29,14 +32,17 @@
   var blobUrls = new Map();
   var state = {
     memos: [],
-    view: 'timeline',
+    view: 'photos',
     tag: null,
     linkCat: null,
     photoCat: null,
+    memoCat: null,
     composerCat: null,
     composerPhotoCat: null,
+    composerMemoCat: null,
     customCats: loadCustomCats(),
     photoCustomCats: loadPhotoCats(),
+    memoCustomCats: loadMemoCats(),
     query: '',
     searchOpen: true,
     pending: [],
@@ -188,7 +194,8 @@
 
   function updateLinkCatBar() {
     if (!els.linkCatBar) return;
-    var hasLink = !!(els.input && U.parseLinks(els.input.value).length);
+    // 📝 메모 탭에서는 주소를 링크로 뽑지 않으므로 링크 분류 바를 띄우지 않는다
+    var hasLink = state.view !== 'memo' && !!(els.input && U.parseLinks(els.input.value).length);
     if (!hasLink) {
       state.composerCat = null;
       els.linkCatBar.innerHTML = '';
@@ -309,6 +316,160 @@
     if (!state.composerPhotoCat) state.composerPhotoCat = defaultLinkCategory();
     renderPhotoCatBar();
     els.photoCatBar.classList.remove('hidden');
+  }
+
+  /* ---------------------------------------------------------- */
+  /* 📝 메모 분류 (사진도 링크도 없는 글자 메모 전용)              */
+  /*  · DB 스키마 변경 없이 tags 배열의 '__mcat:<분류>' 마커로 동기화  */
+  /* ---------------------------------------------------------- */
+
+  function memoCatPrefix() { return U.MEMO_CAT_PREFIX || '__mcat:'; }
+
+  function memoCategoryOfMemo(m) {
+    return U.memoCategoryOf ? U.memoCategoryOf(m) : '';
+  }
+
+  function defaultMemoCategory() { return U.DEFAULT_MEMO_CATEGORY || '일반'; }
+
+  /* 분류를 고르지 않은 글자 메모는 '일반'으로 센다 */
+  function memoCategoryName(m) { return memoCategoryOfMemo(m) || defaultMemoCategory(); }
+
+  function visibleTagsOf(m) {
+    var tags = (m && m.tags) || [];
+    if (U.visibleTags) return U.visibleTags(tags);
+    return tags.filter(function (t) { return String(t).indexOf(memoCatPrefix()) !== 0; });
+  }
+
+  function defaultMemoCategories() { return ['일반', '시그스튜디오대본']; }
+
+  function loadMemoCats() {
+    try {
+      var arr = JSON.parse(localStorage.getItem(MEMO_CAT_KEY) || '[]');
+      if (!Array.isArray(arr)) return [];
+      return arr.filter(function (x) { return typeof x === 'string' && x.trim(); })
+        .map(function (x) { return x.trim(); });
+    } catch (e) { return []; }
+  }
+
+  function saveMemoCats() {
+    try { localStorage.setItem(MEMO_CAT_KEY, JSON.stringify(state.memoCustomCats)); } catch (e) { /* ignore */ }
+  }
+
+  /* 기본 2종(일반·시그스튜디오대본) → 직접 추가한 분류 → 이미 저장된 메모 분류 순서로 중복 없이 */
+  function memoCategoryList() {
+    var out = [];
+    var seen = {};
+    var push = function (cat) {
+      if (cat && !seen[cat]) { seen[cat] = 1; out.push(cat); }
+    };
+    defaultMemoCategories().forEach(push);
+    (state.memoCustomCats || []).forEach(push);
+    state.memos.forEach(function (m) {
+      if (m.deleted) return;
+      if ((m.images || []).length) return;
+      if ((m.links || []).length) return;
+      push(memoCategoryOfMemo(m));
+    });
+    return out;
+  }
+
+  function memoCategoryCounts(list) {
+    var map = new Map();
+    list.forEach(function (m) {
+      var c = memoCategoryName(m);
+      map.set(c, (map.get(c) || 0) + 1);
+    });
+    return map;
+  }
+
+  function addMemoCategory() {
+    var name = window.prompt('추가할 메모 분류 이름을 입력하세요');
+    if (name === null) return null;
+    name = name.trim();
+    if (!name) return null;
+    if (memoCategoryList().indexOf(name) !== -1) { toast('이미 있는 분류예요'); return name; }
+    state.memoCustomCats.push(name);
+    saveMemoCats();
+    toast("'" + name + "' 분류를 추가했어요");
+    render();
+    return name;
+  }
+
+  /* 📝 메모 탭 상단 카테고리 칩 줄 */
+  function renderMemoCatRow(list) {
+    if (!els.memoCatRow) return;
+    els.memoCatRow.innerHTML = '';
+    var counts = memoCategoryCounts(list);
+    var chipFor = function (label, cat, count) {
+      var active = cat === null ? !state.memoCat : state.memoCat === cat;
+      var b = el('button', 'chip' + (active ? ' active' : ''));
+      b.type = 'button';
+      b.setAttribute('data-cat', cat === null ? '' : cat);
+      b.appendChild(document.createTextNode(label));
+      b.appendChild(el('span', 'chip-count', String(count)));
+      b.addEventListener('click', function () {
+        state.memoCat = (cat === null || active) ? null : cat;
+        render();
+      });
+      return b;
+    };
+    els.memoCatRow.appendChild(chipFor('전체', null, list.length));
+    memoCategoryList().forEach(function (cat) {
+      els.memoCatRow.appendChild(chipFor(cat, cat, counts.get(cat) || 0));
+    });
+    var add = el('button', 'chip add', '+');
+    add.type = 'button';
+    add.setAttribute('aria-label', '메모 분류 추가');
+    add.title = '분류 추가';
+    add.addEventListener('click', function () { addMemoCategory(); });
+    els.memoCatRow.appendChild(add);
+  }
+
+  /* 입력창 위 메모 분류 바 — 📝 메모 탭에서만 보인다 */
+  function renderMemoCatBar() {
+    if (!els.memoCatBar) return;
+    els.memoCatBar.innerHTML = '';
+    var current = state.composerMemoCat || defaultMemoCategory();
+    els.memoCatBar.appendChild(el('span', 'ts-label', '📝 메모'));
+    memoCategoryList().forEach(function (cat) {
+      var b = el('button', 'chip small' + (cat === current ? ' active' : ''), cat);
+      b.type = 'button';
+      b.setAttribute('data-cat', cat);
+      b.addEventListener('mousedown', function (e) { e.preventDefault(); });
+      b.addEventListener('click', function () {
+        state.composerMemoCat = cat;
+        renderMemoCatBar();
+      });
+      els.memoCatBar.appendChild(b);
+    });
+    var add = el('button', 'chip small add', '+');
+    add.type = 'button';
+    add.setAttribute('aria-label', '메모 분류 추가');
+    add.title = '분류 추가';
+    add.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    add.addEventListener('click', function () {
+      var name = addMemoCategory();
+      if (name) state.composerMemoCat = name;
+      renderMemoCatBar();
+    });
+    els.memoCatBar.appendChild(add);
+  }
+
+  function updateMemoCatBar() {
+    if (!els.memoCatBar) return;
+    if (state.view !== 'memo') {
+      state.composerMemoCat = null;
+      els.memoCatBar.innerHTML = '';
+      els.memoCatBar.classList.add('hidden');
+      return;
+    }
+    renderMemoCatBar();
+    els.memoCatBar.classList.remove('hidden');
+  }
+
+  /* 📝 메모 탭에 보이는 메모 = 사진도 링크도 없는 글자 메모 */
+  function isMemoTabMemo(m) {
+    return !(m.images || []).length && !(m.links || []).length;
   }
 
   function getPin() {
@@ -554,11 +715,12 @@
     });
   }
 
-  function tagCounts() {
+  /* 태그 집계 — list 를 주면 그 메모들만 (📝 메모 탭 상단 필터), 없으면 전체 (입력창 자동완성) */
+  function tagCounts(list) {
     var map = new Map();
-    state.memos.forEach(function (m) {
+    (list || state.memos).forEach(function (m) {
       if (m.deleted) return;
-      (m.tags || []).forEach(function (t) {
+      visibleTagsOf(m).forEach(function (t) {
         var key = String(t).toLowerCase();
         var item = map.get(key);
         if (item) item.count++;
@@ -571,18 +733,22 @@
     });
   }
 
-  function renderTagbar() {
+  function renderTagbar(memoOnly) {
     if (!els.tagbar) return;
     els.tagbar.innerHTML = '';
 
-    /* 사진·링크 탭은 각 탭의 분류 줄(#photoCatBar / #linkCatBar 의 카테고리 칩)을 이미 갖고 있다.
-     * 상단 태그 필터 바까지 뜨면 두 줄이 겹쳐 보이므로 타임라인에서만 태그 바를 그린다. */
-    if (state.view !== 'timeline') {
+    /* 사진·링크 탭은 각 탭의 분류 칩 줄(#photoCatBar / #linkCatBar 의 카테고리 칩)을 이미 갖고 있다.
+     * 상단 태그 필터 바까지 뜨면 두 줄이 겹쳐 보이므로, 📝 메모 탭에서만 상단 바를 그린다.
+     * (메모 탭 상단 = 메모 카테고리 칩 줄 + 그 아래 태그 필터 줄) */
+    if (state.view !== 'memo') {
+      if (els.memoCatRow) els.memoCatRow.innerHTML = '';
       els.tagbarWrap.classList.add('hidden');
       return;
     }
 
-    var tags = tagCounts();
+    renderMemoCatRow(memoOnly || []);
+
+    var tags = tagCounts(memoOnly || []);
 
     var all = el('button', 'chip' + (state.tag === null ? ' active' : ''), '전체');
     all.type = 'button';
@@ -605,7 +771,8 @@
       els.tagbar.appendChild(chip);
     });
 
-    els.tagbarWrap.classList.toggle('hidden', tags.length === 0);
+    els.tagbar.classList.toggle('hidden', tags.length === 0);
+    els.tagbarWrap.classList.remove('hidden');
   }
 
   /* 본문 안의 주소를 클릭 링크로 바꾼다.
@@ -849,7 +1016,7 @@
   /* 말풍선 분류 배지 (사진·링크 카테고리를 한눈에)                 */
   /* ---------------------------------------------------------- */
 
-  function memoCategories(m) {
+  function memoBadgeCategories(m) {
     var out = [];
     var seen = {};
     var add = function (cat, kind) {
@@ -862,11 +1029,13 @@
     };
     (m.images || []).forEach(function (img) { add(photoCategoryOf(img), 'img'); });
     (m.links || []).forEach(function (l) { add(linkCategoryOf(l), 'link'); });
+    var memoCat = memoCategoryOfMemo(m);
+    if (memoCat) add(memoCat, 'memo');
     return out;
   }
 
   function catBadgeRow(m) {
-    var cats = memoCategories(m);
+    var cats = memoBadgeCategories(m);
     if (!cats.length) return null;
     var row = el('div', 'cat-badges');
     cats.forEach(function (item) {
@@ -975,6 +1144,32 @@
     return row;
   }
 
+  /* 사진 갤러리·링크 카드에서도 같은 메모 메뉴를 연다 (길게 누르기 / 우클릭) */
+  function attachLongPress(node, m) {
+    var timer = null;
+    var fired = false;
+    node.addEventListener('pointerdown', function (e) {
+      if (e.button && e.button !== 0) return;
+      fired = false;
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        fired = true;
+        if (m && navigator.vibrate) { try { navigator.vibrate(12); } catch (err) {} }
+        openMemoSheet(m);
+      }, 500);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel', 'pointermove'].forEach(function (ev) {
+      node.addEventListener(ev, function () { clearTimeout(timer); });
+    });
+    node.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      openMemoSheet(m);
+    });
+    node.addEventListener('click', function (e) {
+      if (fired) { e.preventDefault(); e.stopPropagation(); fired = false; }
+    }, true);
+  }
+
   function dateDivider(iso) {
     var d = el('div', 'date-divider');
     d.appendChild(el('span', '', U.dateLabel(iso)));
@@ -983,7 +1178,7 @@
 
   function emptyState(kind) {
     var box = el('div', 'empty');
-    var emoji = kind === 'photos' ? '🖼️' : kind === 'links' ? '🔗' : '💬';
+    var emoji = kind === 'photos' ? '🖼️' : kind === 'links' ? '🔗' : kind === 'memo' ? '📝' : '💬';
     box.appendChild(el('div', 'empty-emoji', emoji));
     if (kind === 'photos') {
       box.appendChild(el('p', 'empty-title', '아직 사진이 없어요'));
@@ -994,6 +1189,9 @@
     } else if (state.query || state.tag) {
       box.appendChild(el('p', 'empty-title', '조건에 맞는 메모가 없어요'));
       box.appendChild(el('p', 'empty-sub', '검색어나 태그 필터를 바꿔 보세요.'));
+    } else if (kind === 'memo') {
+      box.appendChild(el('p', 'empty-title', '아직 글자 메모가 없어요'));
+      box.appendChild(el('p', 'empty-sub', '입력창 위 📝 메모 분류를 고르고 보내면 여기에 쌓여요. 사진·링크 메모는 각 탭에만 보여요.'));
     } else {
       box.appendChild(el('p', 'empty-title', '아직 저장한 레퍼런스가 없어요'));
       box.appendChild(el('p', 'empty-sub', '사진·링크·메모를 남기면 카톡 ‘나와의 채팅’처럼 쌓여요.'));
@@ -1025,7 +1223,7 @@
     }
 
     if (!rest.length && !pinned.length) {
-      els.timeline.appendChild(emptyState('timeline'));
+      els.timeline.appendChild(emptyState('memo'));
     } else {
       var lastKey = null;
       rest.forEach(function (m) {
@@ -1137,6 +1335,7 @@
       });
       btn.appendChild(catBtn);
       btn.addEventListener('click', function () { openLightbox(c.memo, c.index); });
+      attachLongPress(btn, c.memo);
       grid.appendChild(btn);
     });
     els.altView.appendChild(grid);
@@ -1253,8 +1452,9 @@
       var foot = el('div', 'ref-foot');
       foot.appendChild(el('span', '', shortDate(it.memo.created_at) + ' ' + U.timeLabel(it.memo.created_at)));
       var right = el('span', 'ref-foot-right');
-      if ((it.memo.tags || []).length) {
-        right.appendChild(el('span', 'ref-tags', (it.memo.tags || []).map(function (t) { return '#' + t; }).join(' ')));
+      var refTags = visibleTagsOf(it.memo);
+      if (refTags.length) {
+        right.appendChild(el('span', 'ref-tags', refTags.map(function (t) { return '#' + t; }).join(' ')));
       }
       if (ytId) {
         // 유튜브 카드는 썸네일 폭을 비우지 않도록 분류 배지를 카드 아래 줄에 둔다
@@ -1271,6 +1471,7 @@
         a.appendChild(faviconEl(it.link.url, 'ref-fav'));
       }
       a.appendChild(body);
+      attachLongPress(a, it.memo);
       cell.appendChild(a);
 
       if (!ytId) cell.appendChild(badge);
@@ -1282,16 +1483,26 @@
 
   function render() {
     var list = filteredMemos();
-    renderTagbar();
+    var memoOnly = list.filter(isMemoTabMemo);
+    renderTagbar(memoOnly);
     els.timeline.classList.remove('hidden');
 
-    if (state.view === 'photos') renderPhotos(list);
-    else if (state.view === 'links') renderLinks(list);
-    else renderTimeline(list);
+    if (state.view === 'photos') {
+      renderPhotos(list.filter(function (m) { return (m.images || []).length > 0; }));
+    } else if (state.view === 'links') {
+      // 🔗 링크 탭 = 사진 없이 링크만 있는 메모 (📝 메모 탭 메모는 제외)
+      renderLinks(list.filter(function (m) {
+        return !(m.images || []).length && !memoCategoryOfMemo(m);
+      }));
+    } else {
+      renderTimeline(state.memoCat
+        ? memoOnly.filter(function (m) { return memoCategoryName(m) === state.memoCat; })
+        : memoOnly);
+    }
 
     var total = state.memos.filter(function (m) { return !m.deleted; }).length;
     els.countBadge.textContent = total ? String(total) : '';
-    els.jumpLatest.classList.toggle('hidden', isNearBottom() || state.view !== 'timeline');
+    els.jumpLatest.classList.toggle('hidden', isNearBottom() || state.view !== 'memo');
   }
 
   /* ---------------------------------------------------------- */
@@ -1404,6 +1615,23 @@
       });
     }
 
+    if (isMemoTabMemo(m)) {
+      items.splice(items.length - 1, 0, {
+        icon: '📝',
+        label: '메모 분류',
+        run: function () { openMemoCatSheet(m); }
+      });
+    }
+
+    // 🔗 링크로 보이던 메모를 📝 메모 탭 분류로 옮긴다 (링크 카드를 걱어내고 글자만)
+    if ((m.links || []).length && !(m.images || []).length) {
+      items.splice(items.length - 1, 0, {
+        icon: '📝',
+        label: '📝 메모 탭으로 옮기기',
+        run: function () { closeSheet(); openMoveToMemoSheet([m.id]); }
+      });
+    }
+
     items.forEach(function (it) {
       var b = el('button', 'sheet-item' + (it.danger ? ' danger' : ''));
       b.type = 'button';
@@ -1439,9 +1667,21 @@
         Promise.resolve(opts.apply(cat)).then(function () {
           closeSheet();
           updateLbCat();
-          toast("'" + cat + "'로 분류했어요");
+          if (opts.done) opts.done(cat);
+          else toast("'" + cat + "'로 분류했어요");
         });
       });
+      els.sheetActions.appendChild(b);
+    });
+
+    // 분류 선택지 밖의 보조 작업 (링크 분류 → 메모 탭으로 옮기기 등)
+    var extras = opts.extra ? (opts.extra() || []) : [];
+    extras.forEach(function (it) {
+      var b = el('button', 'sheet-item');
+      b.type = 'button';
+      b.appendChild(el('span', 'si-icon', it.icon || '→'));
+      b.appendChild(el('span', 'si-label', it.label));
+      b.addEventListener('click', it.run);
       els.sheetActions.appendChild(b);
     });
 
@@ -1458,17 +1698,66 @@
     els.sheet.classList.add('open');
   }
 
-  /* 링크 한 개 또는 메모의 모든 링크에 분류를 지정한다 */
+  /* 링크 한 개 또는 메모의 모든 링크에 분류를 지정한다 (+ 이 분류를 통째로 📝 메모 탭으로 옮기기) */
   function openCategorySheet(m, link) {
+    var cat = link ? linkCategoryOf(link) : null;
     catSheet({
       memo: m,
       title: link ? '🔗 ' + hostOf(link.url) + ' 분류' : '🔗 링크 분류',
       categories: linkCategories,
-      current: link ? linkCategoryOf(link) : null,
+      current: cat,
       addCategory: addLinkCategory,
-      apply: function (cat) {
-        return Store.setLinkCategory(m.id, link ? link.url : null, cat);
+      apply: function (next) {
+        return Store.setLinkCategory(m.id, link ? link.url : null, next);
+      },
+      extra: function () {
+        var ids = cat ? linkMemoIdsForCategory(cat) : [];
+        if (ids.length < 2) return [];
+        return [{
+          icon: '📝',
+          label: '이 분류 ' + ids.length + '개를 📝 메모 탭으로 옮기기',
+          run: function () { openMoveToMemoSheet(ids); }
+        }];
       }
+    });
+  }
+
+  /* 한 링크 분류에만 속한(= 사진 없는) 링크 메모 id — 통째로 메모 탭으로 옮길 때 쓴다 */
+  function linkMemoIdsForCategory(cat) {
+    return state.memos.filter(function (m) {
+      if (m.deleted) return false;
+      if ((m.images || []).length) return false;
+      var links = m.links || [];
+      if (!links.length) return false;
+      if (memoCategoryOfMemo(m)) return false;
+      return links.every(function (l) { return linkCategoryOf(l) === cat; });
+    }).map(function (m) { return m.id; });
+  }
+
+  /* 📝 메모 탭 분류 선택 시트 */
+  function openMemoCatSheet(m) {
+    catSheet({
+      memo: m,
+      title: '📝 메모 분류',
+      categories: memoCategoryList,
+      current: memoCategoryName(m),
+      addCategory: addMemoCategory,
+      apply: function (cat) { return Store.setMemoCategory(m.id, cat); }
+    });
+  }
+
+  /* 🔗 링크 메모(들)을 📝 메모 탭 분류로 옮긴다 — 적용하면 링크 카드는 사라지고 글자만 남는다 */
+  function openMoveToMemoSheet(ids) {
+    ids = (ids || []).filter(Boolean);
+    if (!ids.length) return;
+    catSheet({
+      memo: null,
+      title: '📝 메모 탭으로 옮기기 · ' + ids.length + '개',
+      categories: memoCategoryList,
+      current: null,
+      addCategory: addMemoCategory,
+      apply: function (cat) { return Store.moveToMemoTab(ids, cat); },
+      done: function (cat) { toast('📝 ' + cat + ' · ' + ids.length + '개를 옮겼어요'); }
     });
   }
 
@@ -1522,6 +1811,7 @@
 
   /* 말풍선 배지 → 그 배지의 분류를 가진 링크·사진만 바꿈 */
   function openMemoCategorySheet(m, kinds, cat) {
+    if (kinds && kinds.memo) { openMemoCatSheet(m); return; }
     var imgs = (m.images || []).filter(function (img) { return photoCategoryOf(img) === cat; });
     var links = (m.links || []).filter(function (l) { return linkCategoryOf(l) === cat; });
     var targets = imgs.length + links.length;
@@ -1649,15 +1939,22 @@
     els.btnSend.disabled = true;
     els.btnSend.classList.add('sending');
 
+    var inMemoTab = state.view === 'memo';
     var images = state.pending.map(function (p) {
       return { key: p.key, w: p.w, h: p.h, type: p.type, size: p.size, name: p.name, url: '' };
     });
+    /* 📝 메모 탭에서 보낸 글은 주소가 섞여 있어도 글자 그대로(links: []) 저장한다.
+     * 사진을 붙였으면 사진 메모로 갈 곳이 🖼️ 사진 탭이므로 메모 분류를 붙이지 않는다. */
+    var memoCategory = (inMemoTab && !images.length)
+      ? (state.composerMemoCat || defaultMemoCategory())
+      : '';
 
     Store.addMemo({
       content: text,
       images: images,
-      linkCategory: state.composerCat || undefined,
-      photoCategory: state.composerPhotoCat || undefined
+      linkCategory: inMemoTab ? undefined : (state.composerCat || undefined),
+      photoCategory: state.composerPhotoCat || undefined,
+      memoCategory: memoCategory || undefined
     }).then(function () {
       els.input.value = '';
       state.composerCat = null;
@@ -1669,12 +1966,21 @@
       renderPending();
       autoGrow();
       hideTagSuggest();
-      if (state.view !== 'timeline') {
-        state.view = 'timeline';
+
+      // 보낸 메모가 실제로 자리잡는 탭으로 따라간다
+      var landing = images.length ? 'photos'
+        : (inMemoTab ? 'memo' : ((U.parseLinks(text).length) ? 'links' : 'memo'));
+      if (state.view !== landing) {
+        state.tag = null;
+        state.view = landing;
         syncViewTabs();
       }
+      if (landing === 'memo' && state.memoCat && state.memoCat !== memoCategory) state.memoCat = null;
+      updateMemoCatBar();
+      updateLinkCatBar();
       render();
       scrollToBottom(true);
+      if (memoCategory && U.parseLinks(text).length) toast('📝 메모로 저장했어요');
     }).catch(function (e) {
       console.error(e);
       toast('저장하지 못했어요');
@@ -2018,17 +2324,19 @@
   }
 
   function setView(view) {
-    /* 사진·링크 탭에는 태그 필터 바가 없으므로, 타임라인에서 걸어 둔 태그 필터를 들고 가지 않는다
+    /* 사진·링크 탭에는 태그 필터 바가 없으므로, 📝 메모 탭에서 걸어 둔 태그 필터를 들고 가지 않는다
      * (들고 가면 사진·링크 탭이 조건에 걸린 일부만 보여 비어 보일 수 있다) */
-    if (view !== 'timeline' && state.tag !== null) {
+    if (view !== 'memo' && state.tag !== null) {
       state.tag = null;
       if (els.tagbar) els.tagbar.innerHTML = '';
     }
     state.view = view;
     syncViewTabs();
-    const near = isNearBottom();
+    updateMemoCatBar();
+    updateLinkCatBar();
+    var near = isNearBottom();
     render();
-    if (near && view === 'timeline') scrollToBottom(false);
+    if (near && view === 'memo') scrollToBottom(false);
   }
 
   function bindEvents() {
@@ -2369,7 +2677,8 @@
           state.memos = [];
           state.query = '';
           state.tag = null;
-          state.view = 'timeline';
+          state.memoCat = null;
+          state.view = 'photos';
           if (els.searchInput) els.searchInput.value = '';
           syncViewTabs();
           // 로그인 전 화면에 메모가 남지 않도록 DOM 까지 비운다
@@ -2377,6 +2686,7 @@
           els.altView.innerHTML = '';
           els.pinnedSection.innerHTML = '';
           els.tagbar.innerHTML = '';
+          if (els.memoCatRow) els.memoCatRow.innerHTML = '';
           els.countBadge.textContent = '';
         }
         if (state.settingsOpen) renderSettings();
@@ -2396,6 +2706,7 @@
     els.pinnedSection = $('#pinnedSection');
     els.tagbar = $('#tagbar');
     els.tagbarWrap = $('.tagbar-wrap');
+    els.memoCatRow = $('#memoCatRow');
     els.jumpLatest = $('#jumpLatest');
     els.syncBadge = $('#syncBadge');
     els.syncText = $('#syncText');
@@ -2414,6 +2725,7 @@
     els.pendingTray = $('#pendingTray');
     els.linkCatBar = $('#linkCatBar');
     els.photoCatBar = $('#photoCatBar');
+    els.memoCatBar = $('#memoCatBar');
     els.tagSuggest = $('#tagSuggest');
     els.dropZone = $('#dropZone');
     els.sheet = $('#sheet');
@@ -2466,6 +2778,9 @@
     bindEvents();
     autoGrow();
     renderPinDots();
+    syncViewTabs();
+    updateMemoCatBar();
+    updateLinkCatBar();
 
     // config 가 설정돼 있으면 로그인 전까지 메모 화면을 가린다
     if (cloudConfigured()) {

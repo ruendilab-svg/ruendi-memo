@@ -55,14 +55,15 @@
     </div>
 
     <nav id="viewTabs" class="viewtabs" aria-label="보기 전환">
-      <button class="vt" data-view="photos" type="button">🖼️ 사진</button>
+      <button class="vt active" data-view="photos" type="button">🖼️ 사진</button>
       <button class="vt" data-view="links" type="button">🔗 링크</button>
-      <button class="vt active" data-view="timeline" type="button">타임라인</button>
+      <button class="vt" data-view="memo" type="button">📝 메모</button>
     </nav>
   </header>
 
-  <!-- 태그 필터 바 -->
+  <!-- 상단 필터 바 — 📝 메모 탭에서만 보인다 (메모 카테고리 줄 + 태그 줄) -->
   <div class="tagbar-wrap hidden">
+    <div id="memoCatRow" class="memo-cat-row" role="tablist" aria-label="메모 분류"></div>
     <div id="tagbar" class="tagbar" role="tablist" aria-label="태그 필터"></div>
   </div>
 
@@ -80,6 +81,7 @@
     <div id="tagSuggest" class="tag-suggest hidden"></div>
     <div id="linkCatBar" class="link-cat-bar hidden" role="group" aria-label="링크 분류"></div>
     <div id="photoCatBar" class="link-cat-bar photo-cat-bar hidden" role="group" aria-label="사진 분류"></div>
+    <div id="memoCatBar" class="link-cat-bar memo-cat-bar hidden" role="group" aria-label="메모 분류"></div>
     <div id="pendingTray" class="pending-tray hidden"></div>
     <div class="composer-row">
       <button id="btnAttach" class="icon-btn attach" type="button" aria-label="사진 첨부">

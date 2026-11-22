@@ -176,6 +176,17 @@ body.locked #app { filter: blur(1px); }
   padding: 0 0 8px;
   z-index: 11;
 }
+/* 📝 메모 탭 상단 분류 줄 (전체 · 일반 · 시그스튜디오대본 · +) */
+.memo-cat-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 0 12px 6px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.memo-cat-row::-webkit-scrollbar { display: none; }
+.memo-cat-row:empty { display: none; }
 .tagbar {
   display: flex;
   gap: 6px;

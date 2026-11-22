@@ -1,0 +1,11 @@
+# 테스트 실행 중에만 생기는 파일
+test/_cloud_runtime/
+test/_auth_runtime/
+test/shot_*.png
+test/qa_*.png
+test/test_photo_*.png
+test/report.json
+
+# OS
+.DS_Store
+Thumbs.db
